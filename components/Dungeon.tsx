@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { GameState, ItemType, Item, DungeonInfo, DungeonBiome } from '../types';
-import { HEALTH_POTION, XP_TO_LEVEL, generateLootForSource, DUNGEONS, MOBS_BY_BIOME } from '../constants';
+import { GameState, ItemType, Item, DungeonInfo, DungeonBiome, Mob } from '../types';
+import { HEALTH_POTION, XP_TO_LEVEL, generateLootForSource, DUNGEONS, MOBS_BY_BIOME, generateMob } from '../constants';
 
 interface Props {
   gameState: GameState;
@@ -16,32 +16,35 @@ interface CombatLog {
 
 const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goHome }) => {
   const [inSelection, setInSelection] = useState(!gameState.currentDungeonId);
-  const [playerHp, setPlayerHp] = useState(gameState.character?.hp || 0);
-  const [enemyHp, setEnemyHp] = useState(100);
-  const [enemyMaxHp, setEnemyMaxHp] = useState(100);
-  const [enemyName, setEnemyName] = useState('Враг');
-  const [enemyDef, setEnemyDef] = useState(0); // New State for Enemy DEF
-  const [turn, setTurn] = useState<'PLAYER' | 'ENEMY' | 'WIN' | 'LOSE'>('PLAYER');
   const [logs, setLogs] = useState<CombatLog[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  // Local turn state (visual only, logic is synced with effect/state if needed, but for now simple local turn)
+  const [turn, setTurn] = useState<'PLAYER' | 'ENEMY' | 'WIN' | 'LOSE'>('PLAYER');
+  
+  // Shortcuts
   const currentDungeon = DUNGEONS.find(d => d.id === gameState.currentDungeonId);
+  const mob = gameState.dungeonState.currentMob;
+  const playerHp = gameState.character?.hp || 0;
 
   // Auto scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // Init Floor or Selection
+  // Init Encounter if needed
   useEffect(() => {
-    if (gameState.currentDungeonId) {
-        setInSelection(false);
+    if (gameState.currentDungeonId && !gameState.dungeonState.currentMob) {
         startEncounter();
+        setInSelection(false);
+    } else if (gameState.currentDungeonId && gameState.dungeonState.currentMob) {
+        setInSelection(false);
+        // Resume combat...
     } else {
         setInSelection(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.dungeonFloor, gameState.currentDungeonId]);
+  }, [gameState.currentDungeonId, gameState.dungeonState.currentMob]);
 
   const addLog = (text: string, color: string = 'text-gray-300') => {
     setLogs(prev => [...prev.slice(-4), { text, color }]);
@@ -50,19 +53,13 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
   const selectDungeon = (dungeonId: string) => {
       const dungeon = DUNGEONS.find(d => d.id === dungeonId);
       if (dungeon && gameState.character!.level >= dungeon.minLevel) {
-          updateState({ currentDungeonId: dungeonId, dungeonFloor: 1 });
-          setPlayerHp(gameState.character!.hp); // Reset visuals to max
+          updateState({ 
+              currentDungeonId: dungeonId, 
+              dungeonFloor: 1,
+              dungeonState: { ...gameState.dungeonState, currentMob: null } // Clear mob to trigger generation
+          });
       } else {
           addNotification("Уровень слишком мал!");
-      }
-  };
-
-  const getDungeonEffectClass = () => {
-      switch(currentDungeon?.biome) {
-          case DungeonBiome.SWAMP: return 'fog-anim';
-          case DungeonBiome.HELL: return 'lava-anim';
-          case DungeonBiome.ICE: return 'snow-anim';
-          default: return '';
       }
   };
 
@@ -70,140 +67,147 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
     if (!currentDungeon) return;
 
     const floor = gameState.dungeonFloor;
-    const charLevel = gameState.character!.level;
     const isBoss = floor % 5 === 0;
     const isElite = !isBoss && Math.random() > 0.8;
+
+    const newMob = generateMob(currentDungeon.biome, floor, isBoss, isElite);
     
-    // Formula: MobLevel = PlayerLevel + floor(Floor/2) + Random(-1, 1)
-    const mobLevel = Math.max(1, charLevel + Math.floor(floor / 2) + (Math.floor(Math.random() * 3) - 1));
-
-    // Mob Rarity: Common=0, Rare=1, Epic=2 (Elite counts as Rare/Epic roughly)
-    const mobRarityVal = isBoss ? 3 : (isElite ? 1 : 0);
-
-    let hp = 0;
-    if (isBoss) {
-        // Formula: 500 + 100 * PlayerLvl + 50 * Floor
-        hp = 500 + 100 * charLevel + 50 * floor;
-    } else {
-        // Formula: 100 * (1 + Floor/2) * (1 + MobRarity/10)
-        hp = Math.floor(100 * (1 + floor / 2) * (1 + mobRarityVal / 10));
-    }
-
-    // Approx Mob DEF = Level * 1.5
-    const def = Math.floor(mobLevel * 1.5);
+    updateState({
+        dungeonState: {
+            ...gameState.dungeonState,
+            currentMob: newMob
+        }
+    });
     
-    setEnemyMaxHp(hp);
-    setEnemyHp(hp);
-    setEnemyDef(def);
     setTurn('PLAYER');
-    
-    const mobs = MOBS_BY_BIOME[currentDungeon.biome] || MOBS_BY_BIOME[DungeonBiome.FOREST];
-    const template = mobs[Math.floor(Math.random() * mobs.length)];
-    
-    let name = template.name;
-    if (isElite) name = `Элитный ${name}`;
-    if (isBoss) name = `СТРАЖ: Древний ${name}`;
-    
-    setEnemyName(`${name} (Ур.${mobLevel})`);
-    addLog(`Этаж ${floor}: ${name} (HP:${hp} DEF:${def})`, 'text-[#e6c35c]');
-  };
-
-  const applyDungeonEffects = (phase: 'START_TURN' | 'END_TURN') => {
-      if (!currentDungeon) return false;
-      
-      if (currentDungeon.biome === DungeonBiome.DESERT && phase === 'START_TURN') {
-          setPlayerHp(p => Math.max(0, p - 2));
-          addLog("Жара иссушает: -2 HP", "text-orange-400");
-      }
-      if (currentDungeon.biome === DungeonBiome.HELL && phase === 'START_TURN') {
-          setPlayerHp(p => Math.max(0, p - 3));
-          addLog("Адский жар: -3 HP", "text-red-600");
-      }
-      
-      if (currentDungeon.biome === DungeonBiome.ICE && phase === 'START_TURN') {
-          if (Math.random() < 0.15) {
-              addLog("Вы скованы льдом! Ход пропущен.", "text-blue-300");
-              setTurn('ENEMY');
-              setTimeout(enemyTurn, 1000);
-              return true; 
-          }
-      }
-      return false;
-  };
-
-  const calculatePlayerDmg = () => {
-      const char = gameState.character!;
-      let baseStr = char.stats.str;
-      // Get Equipment Stats
-      Object.values(char.equipment).forEach((val) => {
-          const item = val as Item | null;
-          if (item?.stats?.str) baseStr += item.stats.str;
-      });
-
-      // Simple skill bonus approximation based on Class (e.g., Warrior +20% base)
-      let skillBonus = 0;
-      if (char.classType === 'Воин') skillBonus = 20;
-
-      // Formula: (PlayerATK * (1 + Skill/100)) - MobDEF
-      // BaseATK roughly STR * 2
-      const playerATK = baseStr * 2;
-      const rawDmg = Math.floor(playerATK * (1 + skillBonus / 100));
-      const finalDmg = Math.max(1, rawDmg - enemyDef);
-      
-      return finalDmg;
+    addLog(`Этаж ${floor}: ${newMob.name} (Ур.${newMob.level})`, 'text-[#e6c35c]');
   };
 
   const playerAttack = () => {
-    if (turn !== 'PLAYER') return;
+    if (turn !== 'PLAYER' || !mob) return;
     
-    if (applyDungeonEffects('START_TURN')) return;
-
-    const dmg = calculatePlayerDmg();
+    // Calculation
     const char = gameState.character!;
+    let baseStr = char.stats.str;
+    Object.values(char.equipment).forEach((val) => {
+        const item = val as Item | null;
+        if (item?.stats?.str) baseStr += item.stats.str;
+    });
 
-    if (currentDungeon?.biome === DungeonBiome.SWAMP && Math.random() < 0.1) {
-        addLog("Промах в тумане!", "text-gray-500");
-        setTurn('ENEMY');
-        setTimeout(enemyTurn, 1000);
-        return;
-    }
+    const playerATK = baseStr * 2;
+    const rawDmg = Math.floor(playerATK); // Simplified skill bonus for now
+    const finalDmg = Math.max(1, rawDmg - mob.def);
 
+    // Crit
     let dex = char.stats.dex;
     Object.values(char.equipment).forEach((val) => { 
         const item = val as Item | null;
         if (item?.stats?.dex) dex += item.stats.dex; 
     });
-
-    // Crit Formula: 5 + AGI/5 + ClassBonus
-    let classCritBonus = 0;
-    if (char.classType === 'Разведчик') classCritBonus = 15;
-    const critChance = 5 + (dex / 5) + classCritBonus;
-    
+    const critChance = 5 + (dex / 5);
     const isCrit = Math.random() * 100 < critChance;
     
-    let finalDmg = dmg;
-    if (isCrit) {
-        finalDmg = Math.floor(dmg * 2); // Crit is double damage
-        addLog(`КРИТИЧЕСКИЙ УДАР! ${finalDmg} урона!`, 'text-red-400');
-    } else {
-        addLog(`Вы наносите ${finalDmg} урона.`);
-    }
+    let actualDmg = isCrit ? Math.floor(finalDmg * 2) : finalDmg;
+    
+    const newMobHp = Math.max(0, mob.hp - actualDmg);
+    
+    // Update Mob State
+    updateState({
+        dungeonState: {
+            ...gameState.dungeonState,
+            currentMob: { ...mob, hp: newMobHp }
+        }
+    });
 
-    const newEnemyHp = Math.max(0, enemyHp - finalDmg);
-    setEnemyHp(newEnemyHp);
+    if (isCrit) addLog(`КРИТИЧЕСКИЙ УДАР! ${actualDmg} урона!`, 'text-red-400');
+    else addLog(`Вы наносите ${actualDmg} урона.`);
 
-    if (newEnemyHp === 0) {
-        handleWin();
+    if (newMobHp === 0) {
+        handleWin(mob);
     } else {
         setTurn('ENEMY');
-        setTimeout(enemyTurn, 1000);
+        setTimeout(() => enemyTurn(newMobHp), 1000);
     }
+  };
+
+  const enemyTurn = (currentMobHp: number) => {
+    if (!mob) return; // Should not happen if state persisted correctly
+    
+    // Mob Attack
+    const char = gameState.character!;
+    let vit = char.stats.vit;
+    Object.values(char.equipment).forEach((val) => { 
+        const item = val as Item | null;
+        if (item?.stats?.vit) vit += item.stats.vit; 
+    });
+    
+    const mitigation = Math.floor(vit / 2);
+    const dmgToPlayer = Math.max(1, mob.atk - mitigation);
+    
+    const newPlayerHp = Math.max(0, char.hp - dmgToPlayer);
+    
+    updateState({
+        character: { ...char, hp: newPlayerHp }
+    });
+
+    addLog(`${mob.name} атакует на ${dmgToPlayer}!`, 'text-red-500');
+
+    if (newPlayerHp === 0) {
+        setTurn('LOSE');
+    } else {
+        setTurn('PLAYER');
+    }
+  };
+
+  const handleWin = (defeatedMob: Mob) => {
+    setTurn('WIN');
+    const floor = gameState.dungeonFloor;
+    
+    const xpGain = defeatedMob.level * 20;
+    const goldGain = defeatedMob.level * 15;
+    
+    const sourceType = defeatedMob.isBoss ? 'BOSS' : (defeatedMob.rarity === 'Rare' ? 'ELITE' : 'MOB'); // Simplified check
+    const loot = generateLootForSource(gameState.character!, floor, sourceType, currentDungeon?.biome);
+
+    addLog(`Победа! +${goldGain}з, +${xpGain}xp`, 'text-[#e6c35c]');
+    if (loot) addLog(`Найдено: ${loot.icon || ''} ${loot.name}`, 'text-[#8be9fd]');
+
+    const char = { ...gameState.character! };
+    char.gold += goldGain;
+    char.currentExp += xpGain;
+    
+    const reqXp = XP_TO_LEVEL(char.level);
+    if (char.currentExp >= reqXp) {
+        char.level++;
+        char.currentExp -= reqXp;
+        char.maxHp += 10;
+        // Auto heal on level up?
+        char.hp = char.maxHp; 
+        addLog(`УРОВЕНЬ ПОВЫШЕН! Теперь ${char.level}`, 'text-[#50fa7b]');
+    }
+
+    if (loot && char.inventory.length < char.inventorySlots) {
+        char.inventory.push(loot);
+    }
+
+    if (defeatedMob.isBoss) {
+        // Record boss defeat
+        const bossKey = `${gameState.currentDungeonId}_${floor}`;
+        gameState.dungeonState.bossDefeated[bossKey] = true;
+    }
+
+    setTimeout(() => {
+        updateState({ 
+            character: char, 
+            dungeonFloor: floor + 1,
+            dungeonState: { ...gameState.dungeonState, currentMob: null } // Clear mob
+        });
+        setTurn('PLAYER');
+    }, 2000);
   };
 
   const usePotion = () => {
     if (turn !== 'PLAYER') return;
-    if (applyDungeonEffects('START_TURN')) return;
-
     const char = gameState.character!;
     const potionIdx = char.inventory.findIndex(i => i.type === ItemType.POTION);
     
@@ -213,17 +217,14 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
     }
 
     const potionItem = char.inventory[potionIdx];
-    // Formula: PotionBase + (PlayerLevel * Quality) / 2
-    // Quality: Common=1, Rare=2 (using rarity enum logic roughly)
     let quality = 1;
-    if (potionItem.rarity === 'Редкий') quality = 2;
-    if (potionItem.rarity === 'Эпический') quality = 3;
+    if (potionItem.rarity === 'Rare') quality = 2;
+    if (potionItem.rarity === 'Epic') quality = 3;
 
     const baseHeal = potionItem.healAmount || 50;
     const healAmount = Math.floor(baseHeal + (char.level * quality) / 2);
 
-    const newHp = Math.min(char.maxHp, playerHp + healAmount);
-    setPlayerHp(newHp);
+    const newHp = Math.min(char.maxHp, char.hp + healAmount);
     
     const newInv = [...char.inventory];
     newInv.splice(potionIdx, 1);
@@ -231,103 +232,12 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
     updateState({ character: { ...char, inventory: newInv, hp: newHp } });
     addLog(`Выпито зелье. +${healAmount} HP.`, "text-green-400");
     setTurn('ENEMY');
-    setTimeout(enemyTurn, 1000);
-  };
-
-  const enemyTurn = () => {
-    if (turn === 'WIN' || turn === 'LOSE') return;
-
-    const floor = gameState.dungeonFloor;
-    const char = gameState.character!;
-    const isBoss = floor % 5 === 0;
-    
-    let baseDmg = (floor * 3) + Math.floor(Math.random() * 5);
-    if (currentDungeon?.biome === DungeonBiome.HELL) baseDmg += 5;
-
-    // Boss Special Attack: 25 + BossHP% / 10
-    if (isBoss) {
-        const hpPct = (enemyHp / enemyMaxHp) * 100;
-        const specialChance = 25 + hpPct / 10;
-        if (Math.random() * 100 < specialChance) {
-            baseDmg = Math.floor(baseDmg * 1.5);
-            addLog(`${enemyName} использует ЯРОСТЬ!`, 'text-red-400 font-bold');
-        }
-    }
-
-    let vit = char.stats.vit;
-    Object.values(char.equipment).forEach((val) => { 
-        const item = val as Item | null;
-        if (item?.stats?.vit) vit += item.stats.vit; 
-    });
-    
-    const mitigation = Math.floor(vit / 2);
-    const finalDmg = Math.max(1, baseDmg - mitigation);
-
-    setPlayerHp(prev => {
-        const newVal = Math.max(0, prev - finalDmg);
-        if (newVal === 0) setTurn('LOSE');
-        else setTurn('PLAYER');
-        return newVal;
-    });
-
-    addLog(`${enemyName} атакует на ${finalDmg}!`, 'text-red-500');
-  };
-
-  const handleWin = () => {
-    setTurn('WIN');
-    const floor = gameState.dungeonFloor;
-    const isBoss = floor % 5 === 0;
-    const isElite = !isBoss && Math.random() > 0.8;
-    
-    const xpGain = floor * 20;
-    const goldGain = floor * 15;
-    
-    // Generate Loot
-    const sourceType = isBoss ? 'BOSS' : (isElite ? 'ELITE' : 'MOB');
-    const loot = generateLootForSource(gameState.character!, floor, sourceType, currentDungeon?.biome);
-
-    addLog(`Победа! +${goldGain}з, +${xpGain}xp`, 'text-[#e6c35c]');
-    if (loot) addLog(`Найдено: ${loot.icon || ''} ${loot.name}`, 'text-[#8be9fd]');
-
-    // Update State
-    const char = { ...gameState.character! };
-    char.gold += goldGain;
-    char.currentExp += xpGain;
-    
-    const reqXp = XP_TO_LEVEL(char.level);
-    if (char.currentExp >= reqXp) {
-        char.level++;
-        char.currentExp -= reqXp;
-        // Stat points logic handled in UI, just basic stat bump here to prevent crash if not allocated
-        char.maxHp += 10;
-        addLog(`УРОВЕНЬ ПОВЫШЕН! Теперь ${char.level}`, 'text-[#50fa7b]');
-    }
-
-    if (loot) {
-        if (char.inventory.length < char.inventorySlots) {
-            char.inventory.push(loot);
-        } else {
-            addLog(`Сумка полна! Добыча потеряна.`, 'text-gray-500');
-        }
-    }
-
-    if (char.classType === 'Целитель') {
-        const heal = Math.floor(char.maxHp * 0.2);
-        setPlayerHp(Math.min(char.maxHp, playerHp + heal)); 
-        char.hp = Math.min(char.maxHp, char.hp + heal);
-    } else {
-        char.hp = playerHp; 
-    }
-
-    setTimeout(() => {
-        updateState({ character: char, dungeonFloor: floor + 1 });
-    }, 2000);
+    // Using current mob hp from state since it hasn't changed
+    setTimeout(() => enemyTurn(mob ? mob.hp : 0), 1000);
   };
 
   const handleRun = () => {
-    const char = { ...gameState.character! };
-    char.hp = playerHp;
-    updateState({ character: char, currentDungeonId: null });
+    updateState({ currentDungeonId: null, dungeonState: { ...gameState.dungeonState, currentMob: null } });
     goHome();
   };
 
@@ -348,7 +258,6 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
                               <span className="text-xs text-gray-400">Мин. уровень: {d.minLevel}</span>
                           </div>
                           <div className="text-xs text-gray-300 mb-2 italic font-sans">{d.description}</div>
-                          {d.effectDescription && <div className="text-[10px] text-[#d9534f] uppercase tracking-wider">⚠ {d.effectDescription}</div>}
                       </button>
                   ))}
               </div>
@@ -368,7 +277,12 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
                 onClick={() => {
                     const char = { ...gameState.character! };
                     char.hp = Math.floor(char.maxHp / 2); 
-                    updateState({ character: char, dungeonFloor: 1, currentDungeonId: null });
+                    updateState({ 
+                        character: char, 
+                        dungeonFloor: 1, 
+                        currentDungeonId: null,
+                        dungeonState: { ...gameState.dungeonState, currentMob: null } 
+                    });
                     goHome();
                 }}
                 className="pixel-btn text-[#d9534f] border-[#d9534f] hover:bg-red-900"
@@ -379,8 +293,10 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
       )
   }
 
+  if (!mob) return <div>Loading encounter...</div>;
+
   return (
-    <div className={`flex flex-col h-full bg-black/50 relative overflow-hidden ${getDungeonEffectClass()}`}>
+    <div className={`flex flex-col h-full bg-black/50 relative overflow-hidden ${currentDungeon?.biome === DungeonBiome.SWAMP ? 'fog-anim' : ''}`}>
       {/* Top Bar */}
       <div className="flex justify-between p-3 bg-[#1a181e] border-b-2 border-black z-10 relative">
         <div className="text-xs text-gray-300">{currentDungeon?.name} — Этаж {gameState.dungeonFloor}</div>
@@ -399,12 +315,12 @@ const Dungeon: React.FC<Props> = ({ gameState, updateState, addNotification, goH
 
         <div className="text-[#e6c35c] opacity-20 text-4xl font-bold">VS</div>
 
-        <div className={`text-center transition-transform duration-300 ${turn === 'ENEMY' ? 'scale-110' : ''} ${turn === 'WIN' ? 'opacity-0 scale-50' : ''}`}>
+        <div className={`text-center transition-transform duration-300 ${turn === 'ENEMY' ? 'scale-110' : ''}`}>
              <div className="w-20 h-20 bg-[#2a2630] border-2 border-[#d9534f] mb-3 mx-auto flex items-center justify-center text-3xl shadow-[0_0_15px_rgba(217,83,79,0.5)] shake-anim">👾</div>
             <div className="w-32 bg-[#1a181e] h-3 mx-auto border border-gray-600">
-                <div className="bg-[#d9534f] h-full transition-all duration-300" style={{ width: `${(enemyHp / enemyMaxHp) * 100}%` }}></div>
+                <div className="bg-[#d9534f] h-full transition-all duration-300" style={{ width: `${(mob.hp / mob.maxHp) * 100}%` }}></div>
             </div>
-            <p className="text-[10px] mt-1 text-gray-300 font-mono">{enemyName}</p>
+            <p className="text-[10px] mt-1 text-gray-300 font-mono">{mob.name}</p>
         </div>
       </div>
 

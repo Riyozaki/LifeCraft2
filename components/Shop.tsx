@@ -15,18 +15,25 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
   const buyItem = (item: Item) => {
     const char = gameState.character!;
     
+    // Check Discount
+    const discountPct = gameState.shopState.discounts[item.id] || 0;
+    const finalPrice = Math.floor(item.price * (1 - discountPct / 100));
+
     if (char.inventory.length >= char.inventorySlots) {
         addNotification("Сумка переполнена!");
         return;
     }
 
-    if (char.gold >= item.price) {
+    if (char.gold >= finalPrice) {
         const newChar = { ...char };
-        newChar.gold -= item.price;
+        newChar.gold -= finalPrice;
         newChar.inventory.push({ ...item, id: Math.random().toString(36) }); 
         
         // Reset shop visit streak on purchase
-        updateState({ character: newChar, shopVisitStreak: 0 });
+        updateState({ 
+            character: newChar, 
+            shopState: { ...gameState.shopState, visitStreak: 0 }
+        });
         addNotification(`Приобретено: ${item.name}`);
     } else {
         addNotification("Недостаточно золота!");
@@ -116,46 +123,49 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
 
   const refreshShop = () => {
     const charLevel = gameState.character?.level || 1;
-    const streak = gameState.shopVisitStreak || 0;
+    const streak = gameState.shopState.visitStreak || 0;
     const newStreak = streak + 1;
 
     const discountChance = 15 + charLevel/5 + newStreak/10;
-    let discountPct = 0;
+    let globalDiscountPct = 0;
     
     if (Math.random() * 100 < discountChance) {
         const totalRep = (Object.values(gameState.character!.reputation) as number[]).reduce((a, b) => a + b, 0);
         const charisma = Math.floor(totalRep / 200);
-        discountPct = 10 + Math.floor(Math.random() * 20) + (charisma / 10);
-        discountPct = Math.min(50, discountPct);
+        globalDiscountPct = 10 + Math.floor(Math.random() * 20) + (charisma / 10);
+        globalDiscountPct = Math.min(50, globalDiscountPct);
     }
 
     const items: Item[] = [];
+    const discounts: Record<string, number> = {};
     
-    items.push(HEALTH_POTION);
-    items.push(generateRandomItem(charLevel, ItemRarity.COMMON));
-    items.push(generateRandomItem(charLevel, ItemRarity.UNCOMMON));
+    items.push({ ...HEALTH_POTION, id: Math.random().toString() });
+    items.push({ ...generateRandomItem(charLevel, ItemRarity.COMMON), id: Math.random().toString() });
+    items.push({ ...generateRandomItem(charLevel, ItemRarity.UNCOMMON), id: Math.random().toString() });
 
     for(let i=0; i<5; i++) {
-        // Allow higher rarity items to appear more frequently in shop for high level players
         const forcedRarity = Math.random() > 0.8 ? ItemRarity.RARE : undefined;
-        items.push(generateRandomItem(charLevel, forcedRarity));
+        items.push({ ...generateRandomItem(charLevel, forcedRarity), id: Math.random().toString() });
     }
 
-    if (discountPct > 0) {
+    if (globalDiscountPct > 0) {
         items.forEach(i => {
-            i.price = Math.floor(i.price * (1 - discountPct/100));
+            discounts[i.id] = globalDiscountPct;
         });
-        addNotification(`Скидки в лавке! -${Math.floor(discountPct)}%`);
+        addNotification(`Скидки в лавке! -${Math.floor(globalDiscountPct)}%`);
     }
 
     updateState({ 
-        shopItems: items, 
-        lastShopUpdate: Date.now(),
-        shopVisitStreak: newStreak
+        shopState: {
+            items,
+            discounts,
+            lastUpdate: Date.now(),
+            visitStreak: newStreak
+        }
     });
   };
 
-  if (gameState.shopItems.length === 0 || Date.now() - gameState.lastShopUpdate > 10 * 60 * 1000) {
+  if (gameState.shopState.items.length === 0 || Date.now() - gameState.shopState.lastUpdate > 10 * 60 * 1000) {
       refreshShop();
   }
 
@@ -189,11 +199,16 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
 
   const filteredInventory = gameState.character!.inventory.filter(i => filter === 'ALL' || i.type === filter);
 
-  const renderItemCard = (item: Item, action: 'BUY' | 'OWN', index: number) => (
+  const renderItemCard = (item: Item, action: 'BUY' | 'OWN', index: number) => {
+      const discount = action === 'BUY' ? (gameState.shopState.discounts[item.id] || 0) : 0;
+      const finalPrice = Math.floor(item.price * (1 - discount/100));
+
+      return (
       <div key={index} className="bg-[#3a3442] p-3 border border-gray-700 flex justify-between items-center mb-2 shadow-sm">
           <div>
               <div style={{ color: RARITY_COLORS[item.rarity] }} className="text-xs font-bold mb-1 tracking-wide flex items-center gap-2">
                   <span className="text-lg">{item.icon}</span> {item.name}
+                  {discount > 0 && <span className="text-[#e6c35c] text-[8px] bg-red-900 px-1 rounded">-{Math.floor(discount)}%</span>}
               </div>
               <div className="text-[10px] text-gray-400 font-sans leading-tight pl-7">
                   {item.levelReq > 1 && `Ур. ${item.levelReq} • `}
@@ -212,7 +227,7 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
                     onClick={() => buyItem(item)}
                     className="pixel-btn px-2 py-1 text-[10px]"
                 >
-                    {item.price}з
+                    {finalPrice}з
                 </button>
             ) : (
                 <div className="flex flex-col gap-1">
@@ -232,7 +247,8 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
             )}
           </div>
       </div>
-  );
+      );
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -255,7 +271,7 @@ const Shop: React.FC<Props> = ({ gameState, updateState, addNotification }) => {
                         <div className="text-[#e6c35c] text-xs">Золото: <span className="text-white text-sm">{gameState.character!.gold}</span></div>
                         <button onClick={refreshShop} className="text-[10px] text-gray-500 hover:text-white underline">Обновить лавку</button>
                     </div>
-                    {gameState.shopItems.map((item, i) => renderItemCard(item, 'BUY', i))}
+                    {gameState.shopState.items.map((item, i) => renderItemCard(item, 'BUY', i))}
                     <div className="text-center text-[10px] text-gray-600 mt-6 italic">Торговец обновляет товары каждые 10 минут</div>
                 </>
             )}

@@ -28,6 +28,13 @@ export enum ItemType {
   MATERIAL = 'Материал'
 }
 
+export enum MaterialType {
+  BIO = 'BIO',
+  MINERAL = 'MINERAL',
+  MAGIC = 'MAGIC',
+  ARTIFACT = 'ARTIFACT'
+}
+
 export enum ReputationType {
   HEROISM = 'Героизм',
   DISCIPLINE = 'Дисциплина',
@@ -81,7 +88,7 @@ export interface Item {
   healAmount?: number;
   buff?: Buff;
   icon?: string;
-  materialType?: 'BIO' | 'MINERAL' | 'MAGIC' | 'ARTIFACT';
+  materialType?: MaterialType;
   description?: string;
 }
 
@@ -130,7 +137,8 @@ export interface Character {
   reputation: {
     [key in ReputationType]: number;
   };
-  honesty: number; // 0-100
+  /** 0-100 */
+  honesty: number; 
   dailyStreak: number;
   journal: JournalEntry[];
   settings: Settings;
@@ -147,8 +155,11 @@ export interface Quest {
   rarity: ItemRarity;
   rewardGold: number;
   rewardExp: number;
-  rewardItem?: Item; // Fixed reward for specific quests
+  rewardItem?: Item;
   completed: boolean;
+  completedToday?: boolean;
+  lastCompletedAt?: number | null;
+  cooldownMs?: number;
 }
 
 export interface DungeonInfo {
@@ -161,15 +172,45 @@ export interface DungeonInfo {
   effectDescription?: string;
 }
 
+export interface Mob {
+  id: string;
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  atk: number;
+  def: number;
+  rarity: ItemRarity;
+  biome: DungeonBiome;
+  drops: string[]; // Drop keys
+  dropChance: number;
+  isBoss?: boolean;
+  specialAbility?: string;
+}
+
+export interface DungeonState {
+  currentMob: Mob | null;
+  bossDefeated: Record<string, boolean>; // e.g. "forest_5": true
+  activeBuffs: Buff[];
+  activeDebuffs: Buff[];
+}
+
+export interface ShopState {
+  items: Item[];
+  discounts: Record<string, number>; // itemId -> discount percent
+  lastUpdate: number;
+  visitStreak: number;
+}
+
 export interface GameState {
+  version: '1.0';
   character: Character | null;
   lastDailyReset: number;
   lastWeeklyReset: number;
-  lastShopUpdate: number;
-  shopItems: Item[]; 
+  shopState: ShopState;
   activeQuests: Quest[];
   completedQuestIds: string[];
   dungeonFloor: number;
   currentDungeonId: string | null;
-  shopVisitStreak: number; 
+  dungeonState: DungeonState;
 }

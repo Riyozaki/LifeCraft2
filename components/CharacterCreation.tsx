@@ -96,16 +96,26 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
     };
 
     const newState: GameState = {
+      version: '1.0',
       character: newChar,
-      lastDailyReset: 0, // Force quest refresh on first load
+      lastDailyReset: 0, 
       lastWeeklyReset: 0,
-      lastShopUpdate: 0,
-      shopItems: [],
+      shopState: {
+          items: [],
+          discounts: {},
+          lastUpdate: 0,
+          visitStreak: 0
+      },
       activeQuests: [],
       completedQuestIds: [],
       dungeonFloor: 1,
       currentDungeonId: null,
-      shopVisitStreak: 0
+      dungeonState: {
+          currentMob: null,
+          bossDefeated: {},
+          activeBuffs: [],
+          activeDebuffs: []
+      }
     };
 
     saveGame(newState);

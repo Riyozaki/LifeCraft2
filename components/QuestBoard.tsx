@@ -50,7 +50,6 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
         
         for (let i = 0; i < 3; i++) {
             const template = DAILY_QUEST_POOL[Math.floor(Math.random() * DAILY_QUEST_POOL.length)];
-            // Formula: Base Reward logic mostly here, scaling applied on completion
             newActiveQuests.push({
                 ...template,
                 id: `d_${Date.now()}_${i}`,
@@ -111,6 +110,16 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
   };
 
   const addOneTimeQuest = () => {
+      // Check for cooldown (2 hours)
+      const lastOneTime = gameState.activeQuests
+        .filter(q => q.category === QuestCategory.ONETIME)
+        .sort((a,b) => (b.lastCompletedAt || 0) - (a.lastCompletedAt || 0))[0];
+        
+      if (lastOneTime && lastOneTime.lastCompletedAt && (Date.now() - lastOneTime.lastCompletedAt) < 2 * 60 * 60 * 1000) {
+          addNotification("Обновление раз в 2 часа!");
+          return;
+      }
+
       const template = ONETIME_QUEST_POOL[Math.floor(Math.random() * ONETIME_QUEST_POOL.length)];
       const diff = template.difficulty;
       let item = null;
@@ -123,7 +132,8 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
           rewardGold: 100 * diff,
           rewardExp: 50 * diff,
           rewardItem: item || undefined,
-          completed: false
+          completed: false,
+          cooldownMs: 7200000 // 2 hours
       };
 
       updateState({ activeQuests: [...gameState.activeQuests, newQuest] });
@@ -215,10 +225,16 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
     }
 
     let updatedQuests = [...gameState.activeQuests];
+    // Update quest status
+    updatedQuests[questIndex].completed = true;
+    updatedQuests[questIndex].completedToday = true;
+    updatedQuests[questIndex].lastCompletedAt = Date.now();
+
     if (quest.category === QuestCategory.ONETIME) {
-        updatedQuests = updatedQuests.filter(q => q.id !== quest.id);
-    } else {
-        updatedQuests[questIndex].completed = true;
+        // We keep it in list to show it's done or remove? Spec says "Cooldown 2 hours".
+        // If we remove it, we lose the 'lastCompletedAt' tracking. 
+        // Better to keep completed onetimes in a separate list or just mark completed.
+        // For this impl, we keep it but disable completion.
     }
 
     updateState({
