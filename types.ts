@@ -69,9 +69,9 @@ export interface Stats {
 }
 
 export interface Buff {
+  id: string;
   name: string;
-  duration: number; // turns
-  effect: (stats: Stats) => Stats;
+  duration: number; // fights (not turns)
   description: string;
 }
 
@@ -90,6 +90,8 @@ export interface Item {
   icon?: string;
   materialType?: MaterialType;
   description?: string;
+  stackable?: boolean;
+  amount?: number;
 }
 
 export interface Recipe {
@@ -130,6 +132,7 @@ export interface Character {
   stats: Stats;
   hp: number;
   maxHp: number;
+  hpRegen: number;
   gold: number;
   inventory: Item[];
   inventorySlots: number;
@@ -203,7 +206,7 @@ export interface ShopState {
 }
 
 export interface GameState {
-  version: '1.0';
+  version: '1.1';
   character: Character | null;
   lastDailyReset: number;
   lastWeeklyReset: number;

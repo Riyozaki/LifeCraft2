@@ -105,18 +105,48 @@
       @keyframes scroll { 0% { background-position: 0 0; } 100% { background-position: 100% 0; } }
 
       /* Dungeon Biome Effects */
-      .fog-anim { position: relative; }
-      .fog-anim::after {
-        content: ''; position: absolute; inset: 0; pointer-events: none;
-        background: repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0, rgba(255,255,255,0.05) 10px, transparent 10px, transparent 20px);
-        mask-image: linear-gradient(to bottom, transparent, black);
+      .biome-forest {
+        background: repeating-linear-gradient(90deg, #0f1a0f 0px, #0f1a0f 20px, #1a2f1a 20px, #1a2f1a 40px);
+        box-shadow: inset 0 0 100px #000;
       }
-
-      .lava-anim {
-        background: radial-gradient(circle at center, rgba(217, 83, 79, 0.2), transparent 70%);
+      .biome-cave {
+        background: radial-gradient(circle at 50% 50%, #333 0%, #000 90%);
+      }
+      .biome-swamp {
+        background: linear-gradient(180deg, #1a1a10 0%, #2f2f1a 100%);
+      }
+      .biome-swamp::after {
+        content: ''; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(45deg, rgba(20,200,20,0.05) 0, rgba(20,200,20,0.05) 10px, transparent 10px, transparent 20px);
+      }
+      .biome-desert {
+        background: linear-gradient(180deg, #87CEEB 0%, #e6c35c 60%, #c2a03c 100%);
+      }
+      .biome-ice {
+        background: conic-gradient(from 180deg at 50% 50%, #a5f2f3 0deg, #fff 20deg, #a5f2f3 40deg, #6a9fb5 180deg, #a5f2f3 360deg);
+        filter: brightness(0.7);
+      }
+      .biome-necropolis {
+        background: repeating-radial-gradient(circle at 50% -20%, #2a0a2a, #000 20px);
+      }
+      .biome-sky {
+        background: linear-gradient(to bottom, #1e90ff 0%, #87cefa 50%, #fff 100%);
+      }
+      .biome-hell {
+        background: linear-gradient(to bottom, #2a0000 0%, #500 50%, #f00 100%);
         animation: pulse-red 2s infinite;
       }
-      @keyframes pulse-red { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+      .biome-chaos {
+        background: repeating-conic-gradient(#2a2630 0deg, #e6c35c 10deg, #2a2630 20deg);
+        filter: contrast(1.2) brightness(0.5);
+      }
+      .biome-aether {
+        background: radial-gradient(circle, #000033 0%, #000 100%);
+        background-image: radial-gradient(white 1px, transparent 1px);
+        background-size: 20px 20px;
+      }
+
+      @keyframes pulse-red { 0%, 100% { filter: brightness(0.8); } 50% { filter: brightness(1.2); } }
 
     </style>
   <script type="importmap">

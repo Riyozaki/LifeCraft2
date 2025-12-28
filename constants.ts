@@ -1,5 +1,28 @@
 import { ClassType, ItemRarity, ItemType, Stats, Item, Quest, ReputationType, DungeonBiome, Recipe, DungeonInfo, QuestCategory, Character, MaterialType, Mob } from './types';
 
+// --- CONFIGURATION & BALANCE ---
+export const GAME_BALANCE = {
+    DROP_RATES: {
+        BASE: 0.05,
+        ELITE_BONUS: 0.15, // Adds to base
+        BOSS_FIXED: 1.0,   // Guaranteed
+        LUCK_FACTOR: 50,   // dex / 50 (Buffed luck impact)
+    },
+    RARITY_THRESHOLDS: {
+        LEGENDARY: 98,
+        EPIC: 90,
+        RARE: 70,
+        UNCOMMON: 40
+    },
+    SCALING: {
+        DAMAGE_STAT_MULT: 0.05, // 1 Stat point = +5% Base Damage
+        DEFENSE_DIVISOR: 100, // Mitigation = 100 / (100 + Def)
+        // Improved scaling to match item prices (1.15^L instead of 1.1^L)
+        QUEST_GOLD_SCALING: 1.15, 
+        QUEST_XP_SCALING: 1.15, 
+    }
+};
+
 // --- STATS & CLASSES ---
 export const INITIAL_STATS: Record<ClassType, Stats> = {
   [ClassType.WARRIOR]: { str: 15, dex: 8, int: 3, vit: 12 },
@@ -15,10 +38,21 @@ export const CLASS_DESCRIPTIONS: Record<ClassType, string> = {
   [ClassType.HEALER]: "Хранитель жизни. Исцеляет раны после каждого испытания.",
 };
 
-// Formula: 100 * L + 50 + 10 * L^2
-export const XP_TO_LEVEL = (level: number) => 100 * level + 50 + 10 * Math.pow(level, 2);
+// Rebalanced XP Curve: Smoother progression at mid-levels.
+// Old: 100L + 50 + 10L^2
+// New: 150L + 50 * L^1.3
+export const XP_TO_LEVEL = (level: number) => Math.floor(150 * level + 50 * Math.pow(level, 1.3));
 
-export const STAT_POINTS_PER_LEVEL = (level: number) => 5 + Math.floor(level / 3);
+export const STAT_POINTS_PER_LEVEL = (level: number) => 5 + Math.floor(level / 5);
+
+// --- BUFF EFFECTS ---
+export const BUFF_EFFECTS: Record<string, (stats: Stats) => Stats> = {
+    'str_boost_small': (s) => ({ ...s, str: s.str + 2 }),
+    'dex_boost_small': (s) => ({ ...s, dex: s.dex + 2 }),
+    'int_boost_small': (s) => ({ ...s, int: s.int + 2 }),
+    'vit_boost_small': (s) => ({ ...s, vit: s.vit + 2 }),
+    'all_boost_large': (s) => ({ str: s.str + 10, dex: s.dex + 10, int: s.int + 10, vit: s.vit + 10 }),
+};
 
 // --- COLORS ---
 export const RARITY_COLORS: Record<ItemRarity, string> = {
@@ -36,6 +70,14 @@ export const MOOD_EMOJIS = {
   'Regret': '😞'
 };
 
+// --- HELPER FOR UUID ---
+export const generateUUID = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+};
+
 // --- ITEM DATABASE ---
 
 const createItem = (
@@ -46,6 +88,8 @@ const createItem = (
     // Price Formula: (Level * 10) * RarityMultiplier
     const mult = { [ItemRarity.COMMON]: 1, [ItemRarity.UNCOMMON]: 3, [ItemRarity.RARE]: 10, [ItemRarity.EPIC]: 30, [ItemRarity.LEGENDARY]: 100 };
     const price = (level * 10) * mult[rarity];
+
+    const isStackable = [ItemType.MATERIAL, ItemType.POTION, ItemType.SCROLL, ItemType.FOOD].includes(type);
 
     return {
         id: baseId,
@@ -59,70 +103,78 @@ const createItem = (
         icon,
         classReq,
         healAmount: heal,
-        materialType: matType
+        materialType: matType,
+        stackable: isStackable,
+        amount: 1
     };
 };
 
 export const ITEMS_DATABASE: Item[] = [
     // --- WARRIOR WEAPONS ---
-    createItem('w_war_1', 'Ржавый меч', ItemType.WEAPON, ItemRarity.COMMON, 1, { str: 5 }, '', '🗡️', ClassType.WARRIOR),
+    createItem('w_war_0', 'Деревянный меч', ItemType.WEAPON, ItemRarity.COMMON, 1, { str: 2 }, 'Тренировочный', '🗡️', ClassType.WARRIOR),
+    createItem('w_war_1', 'Ржавый меч', ItemType.WEAPON, ItemRarity.COMMON, 2, { str: 5 }, '', '🗡️', ClassType.WARRIOR),
     createItem('w_war_2', 'Клинок стража', ItemType.WEAPON, ItemRarity.UNCOMMON, 5, { str: 10 }, '+5% Крит', '🗡️', ClassType.WARRIOR),
     createItem('w_war_3', 'Секира гнева', ItemType.WEAPON, ItemRarity.RARE, 10, { str: 18 }, 'Крит +15 урона', '🪓', ClassType.WARRIOR),
     createItem('w_war_4', 'Меч Непокорённого', ItemType.WEAPON, ItemRarity.EPIC, 15, { str: 25 }, '+10% Скор. атаки при убийстве', '⚔️', ClassType.WARRIOR),
     createItem('w_war_5', 'Легионерский глеф', ItemType.WEAPON, ItemRarity.LEGENDARY, 20, { str: 35 }, 'Убивает <20% HP (раз в 5 атак)', '🔱', ClassType.WARRIOR),
 
     // --- MAGE WEAPONS ---
-    createItem('w_mag_1', 'Посох новичка', ItemType.WEAPON, ItemRarity.COMMON, 1, { int: 3 }, '', '🪄', ClassType.MAGE),
+    createItem('w_mag_0', 'Старая палочка', ItemType.WEAPON, ItemRarity.COMMON, 1, { int: 2 }, '', '🥢', ClassType.MAGE),
+    createItem('w_mag_1', 'Посох новичка', ItemType.WEAPON, ItemRarity.COMMON, 2, { int: 3 }, '', '🪄', ClassType.MAGE),
     createItem('w_mag_2', 'Жезл пламени', ItemType.WEAPON, ItemRarity.UNCOMMON, 5, { int: 8 }, '+5% Огнем', '🔥', ClassType.MAGE),
     createItem('w_mag_3', 'Сфера хаоса', ItemType.WEAPON, ItemRarity.RARE, 10, { int: 15 }, '10% Поджечь', '🔮', ClassType.MAGE),
     createItem('w_mag_4', 'Посох вечной зимы', ItemType.WEAPON, ItemRarity.EPIC, 15, { int: 22 }, 'Заморозка (1 раз/бой)', '❄️', ClassType.MAGE),
     createItem('w_mag_5', 'Ключ Архимага', ItemType.WEAPON, ItemRarity.LEGENDARY, 20, { int: 30 }, '+50% Урона, x2 Маны', '🗝️', ClassType.MAGE),
 
     // --- SCOUT WEAPONS ---
-    createItem('w_sct_1', 'Кинжал вора', ItemType.WEAPON, ItemRarity.COMMON, 1, { dex: 4 }, '', '🔪', ClassType.SCOUT),
+    createItem('w_sct_0', 'Перочинный нож', ItemType.WEAPON, ItemRarity.COMMON, 1, { dex: 2 }, '', '🔪', ClassType.SCOUT),
+    createItem('w_sct_1', 'Кинжал вора', ItemType.WEAPON, ItemRarity.COMMON, 2, { dex: 4 }, '', '🔪', ClassType.SCOUT),
     createItem('w_sct_2', 'Клинки теней', ItemType.WEAPON, ItemRarity.UNCOMMON, 5, { dex: 7 }, '+8% Крит', '🗡️', ClassType.SCOUT),
     createItem('w_sct_3', 'Ядовитые иглы', ItemType.WEAPON, ItemRarity.RARE, 10, { dex: 12 }, '15% Яд', '💉', ClassType.SCOUT),
     createItem('w_sct_4', 'Призрачный клинок', ItemType.WEAPON, ItemRarity.EPIC, 15, { dex: 18 }, 'Первый удар крит', '👻', ClassType.SCOUT),
     createItem('w_sct_5', 'Лезвия судьбы', ItemType.WEAPON, ItemRarity.LEGENDARY, 20, { dex: 25 }, '50% Уворот при HP < 30%', '⚔️', ClassType.SCOUT),
 
     // --- HEALER WEAPONS ---
-    createItem('w_hlr_1', 'Посох ученика', ItemType.WEAPON, ItemRarity.COMMON, 1, { int: 3 }, '', '🦯', ClassType.HEALER),
+    createItem('w_hlr_0', 'Деревянный посох', ItemType.WEAPON, ItemRarity.COMMON, 1, { int: 2 }, '', '🦯', ClassType.HEALER),
+    createItem('w_hlr_1', 'Посох ученика', ItemType.WEAPON, ItemRarity.COMMON, 2, { int: 3 }, '', '🦯', ClassType.HEALER),
     createItem('w_hlr_2', 'Жезл милосердия', ItemType.WEAPON, ItemRarity.UNCOMMON, 5, { int: 6 }, '+5% Лечение', '✨', ClassType.HEALER),
     createItem('w_hlr_3', 'Скипетр восст.', ItemType.WEAPON, ItemRarity.RARE, 10, { int: 10 }, '+5 HP реген/ход', '⚕️', ClassType.HEALER),
     createItem('w_hlr_4', 'Посох света', ItemType.WEAPON, ItemRarity.EPIC, 15, { int: 16 }, 'Лечение снимает дебафф', '🌟', ClassType.HEALER),
     createItem('w_hlr_5', 'Сердце целителя', ItemType.WEAPON, ItemRarity.LEGENDARY, 20, { int: 22 }, '+20% HP группе', '💖', ClassType.HEALER),
 
     // --- HEAD ARMOR ---
-    createItem('a_head_1', 'Кожаный капюшон', ItemType.HEAD, ItemRarity.COMMON, 1, { dex: 2 }, '', '🧢'),
+    createItem('a_head_0', 'Повязка', ItemType.HEAD, ItemRarity.COMMON, 1, { vit: 1 }, '', '🤕'),
+    createItem('a_head_1', 'Кожаный капюшон', ItemType.HEAD, ItemRarity.COMMON, 2, { dex: 2 }, '', '🧢'),
     createItem('a_head_2', 'Шлем стража', ItemType.HEAD, ItemRarity.UNCOMMON, 5, { vit: 5 }, '', '🪖'),
     createItem('a_head_3', 'Маска мудреца', ItemType.HEAD, ItemRarity.RARE, 10, { int: 7 }, '+3% Мана', '🎭'),
     createItem('a_head_4', 'Корона воина', ItemType.HEAD, ItemRarity.EPIC, 15, { str: 5, vit: 5 }, '+10% Защита при <50% HP', '👑'),
     createItem('a_head_5', 'Венец вечности', ItemType.HEAD, ItemRarity.LEGENDARY, 20, { str: 5, dex: 5, int: 5, vit: 5 }, 'Все статы +5', '🤴'),
 
     // --- BODY ARMOR ---
-    createItem('a_body_1', 'Рваная рубаха', ItemType.BODY, ItemRarity.COMMON, 1, { vit: 1 }, '', '👕'),
+    createItem('a_body_0', 'Тряпки', ItemType.BODY, ItemRarity.COMMON, 1, { vit: 1 }, '', '👕'),
+    createItem('a_body_1', 'Рваная рубаха', ItemType.BODY, ItemRarity.COMMON, 2, { vit: 1 }, '', '👕'),
     createItem('a_body_2', 'Кожаный доспех', ItemType.BODY, ItemRarity.UNCOMMON, 5, { vit: 4 }, '', '🧥'),
     createItem('a_body_3', 'Мантия стихий', ItemType.BODY, ItemRarity.RARE, 10, { vit: 6, int: 3 }, '+10% Сопротивление', '👘'),
     createItem('a_body_4', 'Доспех титана', ItemType.BODY, ItemRarity.EPIC, 15, { vit: 15 }, 'Блок 1 атаки', '🛡️'),
     createItem('a_body_5', 'Плащ реальности', ItemType.BODY, ItemRarity.LEGENDARY, 20, { vit: 10, dex: 10 }, 'Возрождение с 1 HP (1 раз/день)', '🌌'),
 
     // --- RINGS ---
-    createItem('acc_ring_1', 'Медное кольцо', ItemType.RING, ItemRarity.COMMON, 1, { vit: 1 }, '', '💍'),
+    createItem('acc_ring_1', 'Медное кольцо', ItemType.RING, ItemRarity.COMMON, 2, { vit: 1 }, '', '💍'),
     createItem('acc_ring_2', 'Кольцо удачи', ItemType.RING, ItemRarity.UNCOMMON, 5, {}, '+5% Дроп', '🍀'),
     createItem('acc_ring_3', 'Кольцо времени', ItemType.RING, ItemRarity.RARE, 10, { dex: 3 }, 'Магазин медленнее', '⏳'),
     createItem('acc_ring_4', 'Печать героя', ItemType.RING, ItemRarity.EPIC, 15, { str: 5 }, '+10% XP за квесты', '🏵️'),
     createItem('acc_ring_5', 'Кольцо судьбы', ItemType.RING, ItemRarity.LEGENDARY, 20, { int: 5 }, 'Гарант Rare за квест', '🧿'),
 
     // --- AMULETS ---
-    createItem('acc_amu_1', 'Каменный амулет', ItemType.AMULET, ItemRarity.COMMON, 1, { vit: 2 }, '', '📿'),
+    createItem('acc_amu_1', 'Каменный амулет', ItemType.AMULET, ItemRarity.COMMON, 2, { vit: 2 }, '', '📿'),
     createItem('acc_amu_2', 'Амулет зверя', ItemType.AMULET, ItemRarity.UNCOMMON, 5, { str: 3, dex: 3 }, '', '🐺'),
     createItem('acc_amu_3', 'Амулет знаний', ItemType.AMULET, ItemRarity.RARE, 10, { int: 5 }, '+2% Навыки', '📚'),
     createItem('acc_amu_4', 'Амулет баланса', ItemType.AMULET, ItemRarity.EPIC, 15, { str: 3, dex: 3, int: 3, vit: 3 }, 'Баланс', '☯️'),
     createItem('acc_amu_5', 'Сердце мира', ItemType.AMULET, ItemRarity.LEGENDARY, 20, { vit: 20 }, 'Реген в реале', '🌍'),
 
     // --- CONSUMABLES ---
-    createItem('pot_hp_s', 'Малое зелье', ItemType.POTION, ItemRarity.COMMON, 1, {}, 'Восст. 20 HP', '🍷', undefined, 20),
-    createItem('pot_sta', 'Зелье выносливости', ItemType.POTION, ItemRarity.UNCOMMON, 5, {}, '+10 ВЫН (5 ходов)', '🧪'), // Simplified logic, behaves as heal or buff in full implementation
+    createItem('pot_hp_s', 'Малое зелье', ItemType.POTION, ItemRarity.COMMON, 1, {}, '60 HP + 15%', '🍷', undefined, 60),
+    createItem('pot_sta', 'Зелье выносливости', ItemType.POTION, ItemRarity.UNCOMMON, 5, {}, '+10 ВЫН (5 ходов)', '🧪'), 
     createItem('pot_mana', 'Эликсир ясности', ItemType.POTION, ItemRarity.RARE, 10, {}, 'Восст. Ману', '💧'),
     createItem('pot_hero', 'Зелье героя', ItemType.POTION, ItemRarity.EPIC, 15, {}, '+10 Все статы (3 хода)', '🥃'),
     createItem('pot_full', 'Слеза феникса', ItemType.POTION, ItemRarity.LEGENDARY, 20, {}, 'Полное исцеление', '🏺', undefined, 9999),
@@ -146,324 +198,241 @@ export const ITEMS_DATABASE: Item[] = [
 
 export const HEALTH_POTION = ITEMS_DATABASE.find(i => i.id === 'pot_hp_s')!;
 
-// --- QUEST POOLS ---
-
-const createQuestTemplate = (title: string, desc: string, rep: ReputationType, diff: number, rarity: ItemRarity): Omit<Quest, 'id' | 'completed' | 'rewardGold' | 'rewardExp' | 'category' | 'cooldownMs'> => ({
-    title, description: desc, reputationType: rep, difficulty: diff, rarity
-});
-
-export const DAILY_QUEST_POOL = [
-    createQuestTemplate("Живительная влага", "Выпить 2 литра воды.", ReputationType.DISCIPLINE, 1, ItemRarity.COMMON),
-    createQuestTemplate("Утренняя разминка", "10 минут растяжки или зарядки.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Путь странника", "Прогулка на свежем воздухе 30 минут.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Тихая трапеза", "Завтрак без использования гаджетов.", ReputationType.DISCIPLINE, 1, ItemRarity.COMMON),
-    createQuestTemplate("Хроники побед", "Записать 3 хороших события дня.", ReputationType.CREATIVITY, 2, ItemRarity.COMMON),
-    createQuestTemplate("Сила воина", "Выполнить 15 отжиманий.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Мудрость древних", "Прочесть 10 страниц книги.", ReputationType.CREATIVITY, 2, ItemRarity.COMMON),
-    createQuestTemplate("Дар слова", "Поблагодарить кого-то от души.", ReputationType.HEROISM, 1, ItemRarity.COMMON),
-    createQuestTemplate("Пища героев", "Приготовить полезный ужин.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Созерцание", "5 минут полной тишины и покоя.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Порядок в мыслях", "Навести порядок на рабочем столе.", ReputationType.DISCIPLINE, 1, ItemRarity.COMMON),
-    createQuestTemplate("Стойкость", "Сделать 20 приседаний.", ReputationType.HEROISM, 2, ItemRarity.COMMON),
-    createQuestTemplate("Стратегия", "Составить план из 3 целей на завтра.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Искренность", "Сделать честный комплимент.", ReputationType.HEROISM, 1, ItemRarity.COMMON),
-    createQuestTemplate("Подготовка ко сну", "Приглушить свет за 30 мин до сна.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Дары природы", "Съесть 2 порции овощей.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Дыхание жизни", "Дыхательная практика 5 минут.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Ясный ум", "Не трогать телефон первый час утра.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Покой", "Выключить экраны за час до сна.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Зов крови", "Позвонить родным или близким.", ReputationType.HEROISM, 2, ItemRarity.COMMON),
-];
-
-export const WEEKLY_QUEST_POOL = [
-    createQuestTemplate("Выносливость", "Пробежать суммарно 10 км за неделю.", ReputationType.DISCIPLINE, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Очищение разума", "Провести 5 часов (суммарно) без гаджетов.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Алхимия вкуса", "Приготовить 3 новых блюда.", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Путь атлета", "5 тренировок по 30 минут.", ReputationType.HEROISM, 5, ItemRarity.RARE),
-    createQuestTemplate("Библиотекарь", "Прочитать более 150 страниц.", ReputationType.CREATIVITY, 5, ItemRarity.RARE),
-    createQuestTemplate("Благодетель", "Помочь 3 людям в делах.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Генеральная уборка", "Полная уборка жилища.", ReputationType.DISCIPLINE, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Отчет командира", "Подвести итоги недели и цели.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Разведка", "Посетить новое место в городе.", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Аскеза", "Ограничить сладкое до минимума.", ReputationType.DISCIPLINE, 5, ItemRarity.RARE),
-    createQuestTemplate("Медитация", "7 дней практик осознанности подряд.", ReputationType.DISCIPLINE, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Казначей", "Вести учет расходов всю неделю.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Марш-бросок", "10,000 шагов 5 дней подряд.", ReputationType.DISCIPLINE, 5, ItemRarity.RARE),
-    createQuestTemplate("Ученик", "Изучить новую тему (статья, урок).", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Бережливость", "Один день без денежных трат.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Летописец", "Сделать 3 записи в дневнике.", ReputationType.CREATIVITY, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Творец", "Нарисовать что-то или создать.", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Жертва крови", "Сдать кровь (донорство).", ReputationType.HEROISM, 5, ItemRarity.RARE),
-    createQuestTemplate("Собрание", "Посетить общественное мероприятие.", ReputationType.HEROISM, 5, ItemRarity.RARE),
-    createQuestTemplate("Архивариус", "Разобрать цифровые файлы и фото.", ReputationType.DISCIPLINE, 4, ItemRarity.UNCOMMON),
-];
-
-export const ONETIME_QUEST_POOL = [
-    createQuestTemplate("Мечта", "Описать свою главную мечту.", ReputationType.CREATIVITY, 2, ItemRarity.COMMON),
-    createQuestTemplate("Почтение", "Поблагодарить родителей за всё.", ReputationType.HEROISM, 2, ItemRarity.COMMON),
-    createQuestTemplate("Исцеление души", "Посетить психолога.", ReputationType.DISCIPLINE, 5, ItemRarity.RARE),
-    createQuestTemplate("Автобиография", "Написать историю своей жизни.", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Досье", "Составить профессиональное резюме.", ReputationType.DISCIPLINE, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Служение", "Подать заявку в волонтеры.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Дальние земли", "Посетить новую страну.", ReputationType.CREATIVITY, 6, ItemRarity.LEGENDARY),
-    createQuestTemplate("Марафон", "Пробежать марафонскую дистанцию.", ReputationType.DISCIPLINE, 5, ItemRarity.EPIC),
-    createQuestTemplate("Глас народа", "Создать свой блог или сайт.", ReputationType.CREATIVITY, 4, ItemRarity.RARE),
-    createQuestTemplate("Колесничий", "Получить водительские права.", ReputationType.DISCIPLINE, 4, ItemRarity.RARE),
-    createQuestTemplate("Казна", "Начать вести личный бюджет.", ReputationType.DISCIPLINE, 2, ItemRarity.COMMON),
-    createQuestTemplate("Тайный Санта", "Сделать подарок незнакомцу.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Друид", "Посадить дерево.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Послание в будущее", "Написать письмо себе будущему.", ReputationType.CREATIVITY, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Созыв соратников", "Организовать встречу друзей.", ReputationType.HEROISM, 3, ItemRarity.UNCOMMON),
-    createQuestTemplate("Код предков", "Сделать генетический тест.", ReputationType.CREATIVITY, 5, ItemRarity.EPIC),
-    createQuestTemplate("Наставник", "Найти ментора или учителя.", ReputationType.DISCIPLINE, 4, ItemRarity.RARE),
-    createQuestTemplate("Личный герб", "Оформить профили в соцсетях.", ReputationType.CREATIVITY, 4, ItemRarity.UNCOMMON),
-    createQuestTemplate("Оратор", "Выступить публично.", ReputationType.HEROISM, 4, ItemRarity.RARE),
-    createQuestTemplate("Свое дело", "Запустить собственный проект.", ReputationType.CREATIVITY, 6, ItemRarity.EPIC),
-];
-
-// Event items
-const HAT_SANTA: Item = { id: 'evt_santa', name: 'Шапка Деда Мороза', type: ItemType.HEAD, rarity: ItemRarity.EPIC, price: 0, levelReq: 1, effect: '+5 Хар, Зимой +10% XP', icon: '🎅' };
-const RING_NATURE: Item = { id: 'evt_nature', name: 'Кольцо Природы', type: ItemType.RING, rarity: ItemRarity.EPIC, price: 0, levelReq: 1, effect: '+15% Сопр.', icon: '🌱' };
-const MASK_GHOST: Item = { id: 'evt_ghost', name: 'Маска Призрака', type: ItemType.HEAD, rarity: ItemRarity.EPIC, price: 0, levelReq: 1, effect: '+20% Урон в Некрополе', icon: '🎃' };
-
-interface EventDefinition {
-    dateMatch: (d: Date) => boolean;
-    quest: Omit<Quest, 'id' | 'completed' | 'rewardGold' | 'rewardExp' | 'category' | 'cooldownMs' | 'lastCompletedAt'>;
-    rewardItem?: Item;
-}
-
-export const EVENT_DEFINITIONS: EventDefinition[] = [
-    {
-        dateMatch: (d) => d.getMonth() === 11 && d.getDate() === 31,
-        quest: { title: "Новогоднее чудо", description: "Поздравить 5 друзей.", reputationType: ReputationType.HEROISM, difficulty: 3, rarity: ItemRarity.EPIC },
-        rewardItem: HAT_SANTA
-    },
-    {
-        dateMatch: (d) => d.getMonth() === 3 && d.getDate() === 22, // Apr 22
-        quest: { title: "День Земли", description: "Посадить растение или убраться.", reputationType: ReputationType.HEROISM, difficulty: 3, rarity: ItemRarity.EPIC },
-        rewardItem: RING_NATURE
-    },
-    {
-        dateMatch: (d) => d.getMonth() === 9 && d.getDate() === 31, // Oct 31
-        quest: { title: "Хэллоуин", description: "Нарисовать тыкву.", reputationType: ReputationType.CREATIVITY, difficulty: 3, rarity: ItemRarity.EPIC },
-        rewardItem: MASK_GHOST
-    }
-];
-
-// --- MATERIALS ---
-// Re-export from DB
-export const MATERIALS = ITEMS_DATABASE.filter(i => i.type === ItemType.MATERIAL).reduce((acc, item) => {
-    // Basic mapping for legacy code compatibility, but relying on DB now
-    if (item.id === 'm_skin') acc['SKIN'] = item;
-    if (item.id === 'm_poison') acc['POISON'] = item;
-    if (item.id === 'm_feather') acc['FEATHER'] = item;
-    if (item.id === 'm_root') acc['ROOT'] = item;
-    if (item.id === 'm_ore') acc['ORE'] = item;
-    if (item.id === 'm_crystal') acc['CRYSTAL'] = item;
-    if (item.id === 'm_shard') acc['SHARD'] = item;
-    if (item.id === 'm_essence') acc['ESSENCE'] = item;
-    if (item.id === 'm_dust') acc['DUST'] = item;
-    if (item.id === 'm_soul') acc['SOUL'] = item;
-    if (item.id === 'm_core') acc['CORE_FRAGMENT'] = item;
-    return acc;
-}, {} as Record<string, Item>);
-
-// --- DUNGEONS ---
-export const DUNGEONS: DungeonInfo[] = [
-    { id: 'forest', name: 'Тихий Лес', biome: DungeonBiome.FOREST, minLevel: 1, maxLevel: 5, description: "Начало пути. Шелест листвы скрывает опасность.", effectDescription: "Без эффектов" },
-    { id: 'cave', name: 'Тенистая Пещера', biome: DungeonBiome.CAVE, minLevel: 3, maxLevel: 8, description: "Сырые туннели, где эхо сводит с ума.", effectDescription: "Эхо (звук)" },
-    { id: 'swamp', name: 'Лабиринт Болот', biome: DungeonBiome.SWAMP, minLevel: 5, maxLevel: 12, description: "Вязкая топь затягивает неосторожных.", effectDescription: "Туман: -10% Точность" },
-    { id: 'desert', name: 'Пустыня Забвения', biome: DungeonBiome.DESERT, minLevel: 8, maxLevel: 15, description: "Бескрайние пески под палящим солнцем.", effectDescription: "Жара: -2 HP/ход" },
-    { id: 'ice', name: 'Ледяной Монастырь', biome: DungeonBiome.ICE, minLevel: 10, maxLevel: 20, description: "Обитель вечного холода.", effectDescription: "Холод: 15% шанс пропуска" },
-    { id: 'necropolis', name: 'Некрополь', biome: DungeonBiome.NECROPOLIS, minLevel: 15, maxLevel: 25, description: "Земля мертвых, где нет покоя.", effectDescription: "Нежить (Иммун. к ядам)" },
-    { id: 'sky', name: 'Небесные Сады', biome: DungeonBiome.SKY, minLevel: 18, maxLevel: 30, description: "Парящие острова среди облаков.", effectDescription: "+10% Скорость" },
-    { id: 'hell', name: 'Преисподняя', biome: DungeonBiome.HELL, minLevel: 22, maxLevel: 35, description: "Озеро огня и серы.", effectDescription: "+5 Урона врагам, -3 HP/ход" },
-    { id: 'chaos', name: 'Башня Хаоса', biome: DungeonBiome.CHAOS, minLevel: 25, maxLevel: 45, description: "Искаженная реальность.", effectDescription: "Хаос (Случайные эффекты)" },
-    { id: 'aether', name: 'Эфирный Чертог', biome: DungeonBiome.AETHER, minLevel: 30, maxLevel: 50, description: "Грань между мирами.", effectDescription: "Призрачность (30% уклонение врага)" },
-];
-
-// --- MOBS ---
-interface MobTemplate {
-    name: string;
-    baseHp: number;
-    drops: string[]; // Keys of MATERIALS
-}
-
-// Helper to convert legacy simple mob config to typed Mob if needed, 
-// but we will primarily use this for generation params.
-export const MOBS_BY_BIOME: Record<DungeonBiome, MobTemplate[]> = {
-    [DungeonBiome.FOREST]: [
-        { name: 'Крыса', baseHp: 20, drops: ['SKIN'] },
-        { name: 'Вор', baseHp: 25, drops: ['FEATHER'] },
-        { name: 'Кабан', baseHp: 40, drops: ['SKIN', 'ROOT'] },
-    ],
-    [DungeonBiome.CAVE]: [
-        { name: 'Голем', baseHp: 80, drops: ['ORE'] },
-        { name: 'Тролль', baseHp: 90, drops: ['SKIN'] },
-        { name: 'Нетопырь', baseHp: 30, drops: ['SKIN'] },
-    ],
-    [DungeonBiome.SWAMP]: [
-        { name: 'Утопец', baseHp: 110, drops: ['ROOT'] },
-        { name: 'Жаба', baseHp: 60, drops: ['POISON'] },
-        { name: 'Жижа', baseHp: 130, drops: ['ROOT'] },
-    ],
-    [DungeonBiome.DESERT]: [
-        { name: 'Скорпион', baseHp: 70, drops: ['POISON', 'SHARD'] },
-        { name: 'Мумия', baseHp: 100, drops: ['DUST'] },
-        { name: 'Джинн', baseHp: 150, drops: ['ESSENCE'] },
-    ],
-    [DungeonBiome.ICE]: [
-        { name: 'Волк', baseHp: 120, drops: ['SKIN', 'SHARD'] },
-        { name: 'Йети', baseHp: 200, drops: ['SKIN'] },
-        { name: 'Дух', baseHp: 90, drops: ['SHARD', 'ESSENCE'] },
-    ],
-    [DungeonBiome.NECROPOLIS]: [
-        { name: 'Скелет', baseHp: 140, drops: ['ORE'] },
-        { name: 'Лич', baseHp: 180, drops: ['DUST', 'SOUL'] },
-        { name: 'Призрак', baseHp: 100, drops: ['ESSENCE'] },
-    ],
-    [DungeonBiome.SKY]: [
-        { name: 'Грифон', baseHp: 250, drops: ['FEATHER', 'SKIN'] },
-        { name: 'Элементаль', baseHp: 200, drops: ['ESSENCE'] },
-        { name: 'Гарпия', baseHp: 180, drops: ['FEATHER'] },
-    ],
-    [DungeonBiome.HELL]: [
-        { name: 'Бес', baseHp: 150, drops: ['ORE'] },
-        { name: 'Демон', baseHp: 300, drops: ['ORE', 'SOUL'] },
-        { name: 'Гончая', baseHp: 220, drops: ['SKIN', 'POISON'] },
-    ],
-    [DungeonBiome.CHAOS]: [
-        { name: 'Мутант', baseHp: 400, drops: ['POISON', 'ORE'] },
-        { name: 'Глаз', baseHp: 300, drops: ['ESSENCE', 'DUST'] },
-    ],
-    [DungeonBiome.AETHER]: [
-        { name: 'Страж', baseHp: 500, drops: ['SHARD', 'SOUL'] },
-        { name: 'Пожиратель', baseHp: 450, drops: ['DUST', 'ESSENCE'] },
-    ],
-};
-
 // --- RECIPES ---
-// Simplified recipe lookup since Item IDs are now in DB.
+// Rebalanced recipes with progression
 export const RECIPES: Recipe[] = [
+    // --- STARTER GEAR (Level 1, Cheap) ---
+    {
+        id: 'r_start_sword',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'w_war_0')!,
+        materials: [{ name: 'Руда', count: 1 }],
+        goldCost: 10
+    },
+    {
+        id: 'r_start_wand',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'w_mag_0')!,
+        materials: [{ name: 'Корень', count: 1 }],
+        goldCost: 10
+    },
+    {
+        id: 'r_start_dagger',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'w_sct_0')!,
+        materials: [{ name: 'Руда', count: 1 }],
+        goldCost: 10
+    },
+    {
+        id: 'r_start_staff',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'w_hlr_0')!,
+        materials: [{ name: 'Корень', count: 1 }],
+        goldCost: 10
+    },
+    {
+        id: 'r_start_rags',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'a_body_0')!,
+        materials: [{ name: 'Шкура', count: 1 }],
+        goldCost: 10
+    },
+
+    // --- CONSUMABLES ---
     {
         id: 'r_regen_pot',
-        resultItem: ITEMS_DATABASE.find(i => i.id === 'pot_hp_s') || ITEMS_DATABASE[0], // fallback
-        materials: [{ name: 'Шкура', count: 3 }, { name: 'Корень', count: 1 }],
-        goldCost: 50
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'pot_hp_s')!,
+        materials: [{ name: 'Шкура', count: 2 }, { name: 'Корень', count: 1 }],
+        goldCost: 30
     },
     {
-        id: 'r_dagger_shadow',
-        resultItem: ITEMS_DATABASE.find(i => i.id === 'w_sct_2') || ITEMS_DATABASE[0],
-        materials: [{ name: 'Яд', count: 2 }, { name: 'Руда', count: 4 }],
-        goldCost: 200
-    },
-    // ... (Keeping it brief, logic remains similar but should lookup via DB ideally)
+        id: 'r_sta_pot',
+        resultItem: ITEMS_DATABASE.find(i => i.id === 'pot_sta')!,
+        materials: [{ name: 'Корень', count: 2 }, { name: 'Перо', count: 1 }],
+        goldCost: 40
+    }
 ];
 
-// Helper to generate a loot item from the DB
-export const generateLootItem = (targetLevel: number, rarity: ItemRarity, classType?: ClassType): Item => {
-    // Filter by Rarity
-    let candidates = ITEMS_DATABASE.filter(i => i.rarity === rarity);
-    
-    // Filter by Level (Candidate Level <= Target + 3 && Candidate Level >= Target - 5)
-    // To allow finding SOMETHING, we relax this if empty
-    let levelCandidates = candidates.filter(i => i.levelReq <= targetLevel + 3 && i.levelReq >= Math.max(1, targetLevel - 5));
-    if (levelCandidates.length === 0) {
-        // Fallback: Find closest level items
-        levelCandidates = candidates.sort((a, b) => Math.abs(a.levelReq - targetLevel) - Math.abs(b.levelReq - targetLevel)).slice(0, 3);
-    }
-    candidates = levelCandidates;
+// --- UTILS & DATA FOR GAME LOGIC ---
 
-    // Class Weighting: 60% chance to prefer class specific items
-    if (classType && Math.random() < 0.6) {
-        const classItems = candidates.filter(i => i.classReq === classType || !i.classReq);
-        if (classItems.length > 0) candidates = classItems;
-    }
+export const MATERIALS = ITEMS_DATABASE.filter(i => i.type === ItemType.MATERIAL);
 
-    if (candidates.length === 0) {
-        // Absolute Fallback
-        return ITEMS_DATABASE[0]; 
-    }
+export const DAILY_QUEST_POOL: Partial<Quest>[] = [
+    { title: 'Утренняя зарядка', description: 'Выполнить зарядку 15 минут.', reputationType: ReputationType.DISCIPLINE, difficulty: 1, rarity: ItemRarity.COMMON },
+    { title: 'Фокусировка', description: 'Работать 1 час не отвлекаясь.', reputationType: ReputationType.DISCIPLINE, difficulty: 2, rarity: ItemRarity.UNCOMMON },
+    { title: 'Доброе дело', description: 'Помочь кому-то.', reputationType: ReputationType.HEROISM, difficulty: 1, rarity: ItemRarity.COMMON },
+    { title: 'Идея дня', description: 'Записать одну новую идею.', reputationType: ReputationType.CREATIVITY, difficulty: 1, rarity: ItemRarity.COMMON },
+];
 
-    const template = candidates[Math.floor(Math.random() * candidates.length)];
-    return { ...template, id: Math.random().toString(36) };
+export const WEEKLY_QUEST_POOL: Partial<Quest>[] = [
+    { title: 'Книжный червь', description: 'Прочитать 50 страниц.', reputationType: ReputationType.CREATIVITY, difficulty: 3, rarity: ItemRarity.RARE },
+    { title: 'Марафонец', description: 'Пройти 50 000 шагов за неделю.', reputationType: ReputationType.DISCIPLINE, difficulty: 4, rarity: ItemRarity.EPIC },
+    { title: 'Волонтер', description: 'Потратить 2 часа на благотворительность.', reputationType: ReputationType.HEROISM, difficulty: 3, rarity: ItemRarity.RARE },
+];
+
+export const ONETIME_QUEST_POOL: Partial<Quest>[] = [
+    { title: 'Первый шаг', description: 'Выполнить первое ежедневное задание.', reputationType: ReputationType.DISCIPLINE, difficulty: 1, rarity: ItemRarity.COMMON },
+    { title: 'Исследователь', description: 'Посетить подземелье.', reputationType: ReputationType.HEROISM, difficulty: 1, rarity: ItemRarity.COMMON },
+    { title: 'Коллекционер', description: 'Найти предмет редкого качества.', reputationType: ReputationType.CREATIVITY, difficulty: 2, rarity: ItemRarity.UNCOMMON },
+];
+
+export const EVENT_DEFINITIONS = [
+    {
+        dateMatch: (d: Date) => d.getMonth() === 0 && d.getDate() === 1, // New Year
+        quest: { title: 'Новое начало', description: 'Записать цели на год.', reputationType: ReputationType.CREATIVITY, difficulty: 1, rarity: ItemRarity.LEGENDARY },
+        rewardItem: ITEMS_DATABASE.find(i => i.id === 'acc_ring_5')
+    }
+];
+
+// --- DUNGEONS & MOBS ---
+
+export const DUNGEONS: DungeonInfo[] = [
+  { id: 'd_forest', name: 'Темный Лес', biome: DungeonBiome.FOREST, minLevel: 1, maxLevel: 5, description: 'Лес, где деревья шепчут имена павших.' },
+  { id: 'd_cave', name: 'Сырая Пещера', biome: DungeonBiome.CAVE, minLevel: 3, maxLevel: 8, description: 'Глубокие туннели, кишащие гоблинами.' },
+  { id: 'd_swamp', name: 'Гнилое Болото', biome: DungeonBiome.SWAMP, minLevel: 7, maxLevel: 12, description: 'Топи, затягивающие неосторожных.', effectDescription: 'Шанс промаха +20%' },
+  { id: 'd_desert', name: 'Пески Времени', biome: DungeonBiome.DESERT, minLevel: 12, maxLevel: 18, description: 'Пустыня, где солнце сжигает заживо.' },
+  { id: 'd_ice', name: 'Ледяной Пик', biome: DungeonBiome.ICE, minLevel: 18, maxLevel: 25, description: 'Холод пробирает до костей.', effectDescription: 'Урон по игроку +10%' },
+  { id: 'd_necro', name: 'Некрополь', biome: DungeonBiome.NECROPOLIS, minLevel: 25, maxLevel: 35, description: 'Город мертвых.', effectDescription: 'Враги наносят +10% урона' },
+  { id: 'd_sky', name: 'Небесная Цитадель', biome: DungeonBiome.SKY, minLevel: 35, maxLevel: 45, description: 'Парящий замок древних магов.' },
+  { id: 'd_hell', name: 'Пекло', biome: DungeonBiome.HELL, minLevel: 45, maxLevel: 60, description: 'Обитель демонов.', effectDescription: 'Периодический урон огнем' },
+];
+
+export const MOBS_BY_BIOME: Record<DungeonBiome, string[]> = {
+    [DungeonBiome.FOREST]: ['Волк', 'Разбойник', 'Медведь', 'Энт'],
+    [DungeonBiome.CAVE]: ['Гоблин', 'Летучая мышь', 'Тролль', 'Каменный голем'],
+    [DungeonBiome.SWAMP]: ['Слизень', 'Болотная ведьма', 'Утопец', 'Гидра'],
+    [DungeonBiome.DESERT]: ['Скорпион', 'Мумия', 'Песчаный червь', 'Джинн'],
+    [DungeonBiome.ICE]: ['Снежный волк', 'Йети', 'Ледяной голем', 'Призрак'],
+    [DungeonBiome.NECROPOLIS]: ['Скелет', 'Зомби', 'Вампир', 'Лич'],
+    [DungeonBiome.SKY]: ['Гарпия', 'Грифон', 'Элементаль воздуха', 'Ангел'],
+    [DungeonBiome.HELL]: ['Бес', 'Цербер', 'Демон', 'Архидемон'],
+    [DungeonBiome.CHAOS]: ['Тень', 'Кошмар', 'Безумие'],
+    [DungeonBiome.AETHER]: ['Дух', 'Фантом', 'Мистик']
 };
 
-export const generateLootForSource = (character: Character, sourceLevel: number, source: 'MOB' | 'ELITE' | 'BOSS' | 'QUEST', biome?: DungeonBiome): Item | null => {
-    // 50% chance for material drop if from mob/elite/boss
-    if (biome && Math.random() < 0.5 && source !== 'QUEST') {
-        const mobTemplate = MOBS_BY_BIOME[biome][0];
-        const drops = mobTemplate.drops;
-        const matKey = drops[Math.floor(Math.random() * drops.length)];
-        const mat = MATERIALS[matKey];
-        if (mat) return { ...mat, id: Math.random().toString() };
+export interface BossTemplate {
+    name: string;
+    ability: 'REGEN' | 'CRITICAL' | 'VAMPIRISM';
+}
+
+export const BOSS_REGISTRY: Record<DungeonBiome, BossTemplate> = {
+    [DungeonBiome.FOREST]: { name: 'Древний Энт', ability: 'REGEN' },
+    [DungeonBiome.CAVE]: { name: 'Король Троллей', ability: 'CRITICAL' },
+    [DungeonBiome.SWAMP]: { name: 'Гидра', ability: 'REGEN' },
+    [DungeonBiome.DESERT]: { name: 'Повелитель Песков', ability: 'VAMPIRISM' },
+    [DungeonBiome.ICE]: { name: 'Ледяной Великан', ability: 'CRITICAL' },
+    [DungeonBiome.NECROPOLIS]: { name: 'Архилич', ability: 'VAMPIRISM' },
+    [DungeonBiome.SKY]: { name: 'Громовержец', ability: 'CRITICAL' },
+    [DungeonBiome.HELL]: { name: 'Балор', ability: 'CRITICAL' },
+    [DungeonBiome.CHAOS]: { name: 'Воплощение Хаоса', ability: 'VAMPIRISM' },
+    [DungeonBiome.AETHER]: { name: 'Пустотный Странник', ability: 'REGEN' },
+};
+
+export const MOB_RARITY_CONFIG: Record<ItemRarity, { xp: number, hpMult: number, atkMult: number }> = {
+    [ItemRarity.COMMON]: { xp: 1, hpMult: 1, atkMult: 1 },
+    [ItemRarity.UNCOMMON]: { xp: 1.5, hpMult: 1.3, atkMult: 1.2 },
+    [ItemRarity.RARE]: { xp: 3, hpMult: 1.8, atkMult: 1.5 },
+    [ItemRarity.EPIC]: { xp: 6, hpMult: 3.0, atkMult: 2.0 },
+    [ItemRarity.LEGENDARY]: { xp: 15, hpMult: 5.0, atkMult: 3.0 }
+};
+
+export const generateMob = (biome: DungeonBiome, floor: number, isBoss: boolean, isElite: boolean, difficultyMult: number): Mob => {
+    // 1. Determine Identity (Boss check first for floor 10 multiples)
+    const isMajorBoss = isBoss && floor % 10 === 0;
+    
+    let name = '';
+    let specialAbility = undefined;
+
+    if (isMajorBoss) {
+        const bossTemplate = BOSS_REGISTRY[biome] || BOSS_REGISTRY[DungeonBiome.FOREST];
+        name = `ВЕЛИКИЙ ${bossTemplate.name}`;
+        specialAbility = bossTemplate.ability;
+    } else {
+        const names = MOBS_BY_BIOME[biome] || MOBS_BY_BIOME[DungeonBiome.FOREST];
+        const baseName = names[Math.floor(Math.random() * names.length)];
+        name = isBoss ? `БОСС: ${baseName}` : baseName;
     }
 
-    // Drop Chance Formula: Base * (1 + Luck/100) * ClassBonus
-    let baseChance = 0.05; // 5% default
-    if (source === 'ELITE') baseChance = 0.2;
-    if (source === 'BOSS') baseChance = 1.0;
-    if (source === 'QUEST') baseChance = 0.5;
+    // 2. Determine Rarity
+    let rarity = ItemRarity.COMMON;
+    if (isElite) rarity = ItemRarity.UNCOMMON;
+    if (isBoss) rarity = ItemRarity.RARE;
+    if (isMajorBoss) rarity = ItemRarity.LEGENDARY; // Major bosses are always Legendary+
+    
+    const config = MOB_RARITY_CONFIG[rarity];
+    const level = floor;
+    
+    // HP Formula: (Base 30 + Floor * 10) * Rarity * Diff
+    // Major bosses get an additional 2x HP buffer
+    const majorBossHpMult = isMajorBoss ? 2.0 : 1.0;
+    const hp = Math.floor((30 + floor * 10) * config.hpMult * majorBossHpMult * difficultyMult);
+    const maxHp = hp;
+    
+    // Atk Formula: (Base 3 + Floor * 1.5) * Rarity * Diff
+    const atk = Math.floor((3 + floor * 1.5) * config.atkMult * difficultyMult);
+    
+    // Def Formula: Floor * 1
+    const def = Math.floor(floor * 1);
 
-    let classBonus = 1.0;
-    if (character.classType === ClassType.SCOUT) classBonus = 1.3;
-    if (character.classType === ClassType.MAGE) classBonus = 1.1;
-    if (character.classType === ClassType.HEALER) classBonus = 1.05;
+    return {
+        id: generateUUID(),
+        name,
+        level,
+        hp,
+        maxHp,
+        atk,
+        def,
+        rarity,
+        biome,
+        drops: [],
+        dropChance: GAME_BALANCE.DROP_RATES.BASE * (isBoss ? 5 : 1) * (isElite ? 2 : 1),
+        isBoss,
+        specialAbility
+    };
+};
 
-    const playerLuck = character.stats.dex / 2; 
-    const dropChance = baseChance * (1 + playerLuck / 100) * classBonus;
+export const generateRandomItem = (level: number, forceRarity?: ItemRarity): Item => {
+    // Filter items around the level (+- 5 levels)
+    let candidates = ITEMS_DATABASE.filter(i => Math.abs(i.levelReq - level) <= 5);
+    
+    if (forceRarity) {
+        candidates = candidates.filter(i => i.rarity === forceRarity);
+    }
+    
+    // If no exact match, widen search or fallback
+    if (candidates.length === 0) {
+        candidates = ITEMS_DATABASE.filter(i => i.levelReq <= level);
+    }
+    if (candidates.length === 0) candidates = ITEMS_DATABASE;
+
+    // Weight by rarity if not forced? 
+    // For now simple random
+    const base = candidates[Math.floor(Math.random() * candidates.length)];
+    
+    return {
+        ...base,
+        id: generateUUID() // New Instance ID
+    };
+};
+
+export const generateLootForSource = (character: Character, floor: number, mobRarity: ItemRarity, biome?: DungeonBiome): Item | null => {
+    let dropChance = GAME_BALANCE.DROP_RATES.BASE;
+    if (mobRarity === ItemRarity.UNCOMMON) dropChance += GAME_BALANCE.DROP_RATES.ELITE_BONUS;
+    if (mobRarity === ItemRarity.RARE) dropChance += 0.3;
+    if (mobRarity === ItemRarity.EPIC) dropChance += 0.5;
+    if (mobRarity === ItemRarity.LEGENDARY) dropChance = 1.0;
+
+    // Luck Bonus
+    dropChance += (character.stats.dex / GAME_BALANCE.DROP_RATES.LUCK_FACTOR);
 
     if (Math.random() > dropChance) return null;
 
-    // Rarity Logic: 70/90/97 thresholds
+    // Determine rarity of loot
+    let lootRarity = ItemRarity.COMMON;
     const roll = Math.random() * 100;
-    let rarity = ItemRarity.COMMON;
-    const epicThreshold = source === 'BOSS' ? 94 : 97;
-
-    if (roll > epicThreshold) rarity = ItemRarity.EPIC;
-    else if (roll > 90) rarity = ItemRarity.RARE;
-    else if (roll > 70) rarity = ItemRarity.UNCOMMON;
     
-    // Tiny chance for Legendary on high levels or Bosses
-    if (source === 'BOSS' && Math.random() > 0.95) rarity = ItemRarity.LEGENDARY;
-
-    return generateLootItem(sourceLevel, rarity, character.classType);
-};
-
-export const generateRandomItem = (targetLevel: number, forcedRarity?: ItemRarity): Item => {
-    const roll = Math.random() * 100;
-    let rarity = forcedRarity || ItemRarity.COMMON;
-    if (!forcedRarity) {
-        if (roll > 98) rarity = ItemRarity.LEGENDARY;
-        else if (roll > 90) rarity = ItemRarity.EPIC;
-        else if (roll > 70) rarity = ItemRarity.RARE;
-        else if (roll > 40) rarity = ItemRarity.UNCOMMON;
-    }
-    return generateLootItem(targetLevel, rarity);
-}
-
-// Mob Generation Helper
-export const generateMob = (biome: DungeonBiome, floor: number, isBoss: boolean, isElite: boolean): Mob => {
-    const templates = MOBS_BY_BIOME[biome];
-    const template = templates[Math.floor(Math.random() * templates.length)];
+    // Simple rarity table based on floor/luck could go here, for now use mob rarity as cap or guide
+    if (roll > 95) lootRarity = ItemRarity.LEGENDARY;
+    else if (roll > 85) lootRarity = ItemRarity.EPIC;
+    else if (roll > 60) lootRarity = ItemRarity.RARE;
+    else if (roll > 30) lootRarity = ItemRarity.UNCOMMON;
     
-    // Scaling
-    const rarity = isBoss ? ItemRarity.EPIC : (isElite ? ItemRarity.RARE : ItemRarity.COMMON);
-    const level = Math.max(1, floor + (isBoss ? 2 : 0) + (isElite ? 1 : 0));
-    const hp = Math.floor(template.baseHp * (1 + level/5) * (isBoss ? 5 : (isElite ? 2 : 1)));
-    
-    return {
-        id: Math.random().toString(),
-        name: template.name,
-        level,
-        hp,
-        maxHp: hp,
-        atk: 5 + level * 2,
-        def: level,
-        rarity,
-        biome,
-        drops: template.drops,
-        dropChance: isBoss ? 1.0 : 0.2,
-        isBoss
-    };
+    // Cap loot rarity by mob rarity? Maybe not strict cap, but bias.
+    // Let's just generate random item around floor level
+    return generateRandomItem(floor, lootRarity);
 };

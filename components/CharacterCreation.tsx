@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { ClassType, Stats, Character, GameState, ReputationType, Equipment } from '../types';
-import { INITIAL_STATS, CLASS_DESCRIPTIONS, HEALTH_POTION } from '../constants';
+import { ClassType, Stats, Character, GameState, ReputationType, Equipment, Item } from '../types';
+import { INITIAL_STATS, CLASS_DESCRIPTIONS, HEALTH_POTION, ITEMS_DATABASE, generateUUID } from '../constants';
 import { saveGame } from '../services/storage';
 
 interface Props {
@@ -12,7 +12,7 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
   const [name, setName] = useState('');
   const [selectedClass, setSelectedClass] = useState<ClassType | null>(null);
   const [bonusStats, setBonusStats] = useState<Stats>({ str: 0, dex: 0, int: 0, vit: 0 });
-  const [pointsLeft, setPointsLeft] = useState(10);
+  const [pointsLeft, setPointsLeft] = useState(5); 
   const [nameError, setNameError] = useState(false);
 
   const handleNameSubmit = () => {
@@ -29,8 +29,9 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
     const base = INITIAL_STATS[selectedClass][stat];
     const currentBonus = bonusStats[stat];
     const diff = val - (base + currentBonus);
-
-    if (diff > 0 && pointsLeft >= diff && (base + currentBonus + diff) <= 20) {
+    
+    // Limitation: No arbitrary cap, just points left
+    if (diff > 0 && pointsLeft >= diff) {
       setBonusStats(prev => ({ ...prev, [stat]: currentBonus + diff }));
       setPointsLeft(prev => prev - diff);
     } 
@@ -38,6 +39,45 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
        setBonusStats(prev => ({ ...prev, [stat]: currentBonus + diff }));
        setPointsLeft(prev => prev - diff);
     }
+  };
+
+  const getStartingItems = (c: ClassType): { items: Item[], gold: number } => {
+      // 2 Potions (Stackable logic handled by init)
+      const items: Item[] = [{...HEALTH_POTION, amount: 2}];
+      let gold = 150; 
+
+      // Find specific starter items from DB
+      const sword = ITEMS_DATABASE.find(i => i.id === 'w_war_0');
+      const wand = ITEMS_DATABASE.find(i => i.id === 'w_mag_0');
+      const dagger = ITEMS_DATABASE.find(i => i.id === 'w_sct_0');
+      const staff = ITEMS_DATABASE.find(i => i.id === 'w_hlr_0');
+      const manaPot = ITEMS_DATABASE.find(i => i.id === 'pot_mana');
+      const whetstone = ITEMS_DATABASE.find(i => i.id === 'm_shard'); // Warrior bonus
+
+      switch (c) {
+          case ClassType.WARRIOR:
+              if (sword) items.push(sword);
+              if (whetstone) items.push({...whetstone, amount: 3}); // Bonus for warrior
+              gold = 150; 
+              break;
+          case ClassType.MAGE:
+              if (wand) items.push(wand);
+              if (manaPot) items.push(manaPot);
+              break;
+          case ClassType.SCOUT:
+              if (dagger) items.push(dagger);
+              gold = 250; // Richer start
+              break;
+          case ClassType.HEALER:
+              if (staff) items.push(staff);
+              items.push({...HEALTH_POTION, amount: 3}); // More potions
+              break;
+      }
+      // Add unique IDs
+      return { 
+          items: items.map(i => ({...i, id: generateUUID()})), 
+          gold 
+      };
   };
 
   const createCharacter = () => {
@@ -50,7 +90,7 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
       vit: INITIAL_STATS[selectedClass].vit + bonusStats.vit,
     };
 
-    const maxHp = 50 + (finalStats.vit * 5);
+    const maxHp = 50 + (finalStats.vit * 10); // Robust HP
 
     const emptyEquipment: Equipment = {
         weapon: null,
@@ -62,6 +102,8 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
         amulet: null,
         belt: null
     };
+    
+    const starter = getStartingItems(selectedClass);
 
     const newChar: Character = {
       name,
@@ -71,8 +113,9 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
       stats: finalStats,
       hp: maxHp,
       maxHp,
-      gold: 100,
-      inventory: [HEALTH_POTION, HEALTH_POTION, HEALTH_POTION],
+      hpRegen: 1, // Base regen
+      gold: starter.gold,
+      inventory: starter.items,
       inventorySlots: 20,
       equipment: emptyEquipment,
       reputation: {
@@ -96,7 +139,7 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
     };
 
     const newState: GameState = {
-      version: '1.0',
+      version: '1.1',
       character: newChar,
       lastDailyReset: 0, 
       lastWeeklyReset: 0,
@@ -138,10 +181,12 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit()}
-              className={`bg-[#1a181e] border-2 ${nameError ? 'border-red-500 shake-anim' : 'border-[#e6c35c]'} text-white p-4 text-center text-lg outline-none mb-8 w-64`}
+              className={`bg-[#1a181e] border-2 ${nameError ? 'border-red-500 shake-anim' : 'border-[#e6c35c]'} text-white p-4 text-center text-lg outline-none mb-2 w-64`}
               placeholder="Имя..."
               autoFocus
             />
+            {nameError && <div className="text-red-500 text-[10px] mb-6">Только буквы, цифры и пробел</div>}
+            {!nameError && <div className="mb-8"></div>}
             <button 
               onClick={handleNameSubmit}
               className="pixel-btn text-sm px-8 py-4"
@@ -161,7 +206,7 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
                   onClick={() => {
                     setSelectedClass(c);
                     setBonusStats({ str: 0, dex: 0, int: 0, vit: 0 });
-                    setPointsLeft(10);
+                    setPointsLeft(5); // Reset to 5
                   }}
                   className={`p-4 border-2 transition-all ${selectedClass === c ? 'border-[#e6c35c] bg-[#3a3442]' : 'border-gray-600 hover:border-gray-500 bg-[#2a2630]'}`}
                 >
@@ -199,18 +244,19 @@ const CharacterCreation: React.FC<Props> = ({ onComplete }) => {
               {(Object.keys(INITIAL_STATS[selectedClass]) as Array<keyof Stats>).map(stat => {
                  const base = INITIAL_STATS[selectedClass][stat];
                  const current = base + bonusStats[stat];
+                 
                  return (
                    <div key={stat} className="flex items-center justify-between group">
                      <span className="uppercase w-16 text-left text-xs text-gray-400 group-hover:text-[#e6c35c] transition-colors">{stat}</span>
-                     <input 
-                        type="range" 
-                        min={base} 
-                        max={20} 
-                        value={current}
-                        onChange={(e) => handleStatChange(stat, parseInt(e.target.value))}
-                        className="w-full mx-4 accent-[#e6c35c] cursor-pointer"
-                     />
-                     <span className="w-8 text-right text-[#e6c35c] font-bold">{current}</span>
+                     <button 
+                        className="text-gray-500 hover:text-white px-2 py-1 text-xl"
+                        onClick={() => handleStatChange(stat, current - 1)}
+                     >-</button>
+                     <span className="w-8 text-center text-[#e6c35c] font-bold">{current}</span>
+                     <button 
+                        className="text-gray-500 hover:text-white px-2 py-1 text-xl"
+                        onClick={() => handleStatChange(stat, current + 1)}
+                     >+</button>
                    </div>
                  )
               })}

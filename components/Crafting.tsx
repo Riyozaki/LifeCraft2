@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { GameState, Item, Recipe, ItemType, ItemRarity } from '../types';
-import { RECIPES, MATERIALS, RARITY_COLORS } from '../constants';
+import { RECIPES, MATERIALS, RARITY_COLORS, generateUUID } from '../constants';
+import { addItemToInventory } from '../services/game';
 
 interface Props {
   gameState: GameState;
@@ -12,12 +13,20 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
   const [tab, setTab] = useState<'RECIPES' | 'MATERIALS'>('RECIPES');
 
   const getMaterialCount = (matName: string) => {
-      return gameState.character!.inventory.filter(i => i.name === matName).length;
+      // Sum up amounts
+      return gameState.character!.inventory
+        .filter(i => i.name === matName)
+        .reduce((sum, item) => sum + (item.amount || 1), 0);
   };
 
   const craftItem = (recipe: Recipe) => {
-      const char = gameState.character!;
+      let char = gameState.character!;
       
+      if (char.level < recipe.resultItem.levelReq) {
+          addNotification(`Требуется уровень ${recipe.resultItem.levelReq}!`);
+          return;
+      }
+
       if (char.gold < recipe.goldCost) {
           addNotification("Недостаточно золота для работы!");
           return;
@@ -30,29 +39,42 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
           }
       }
 
-      if (char.inventory.length >= char.inventorySlots) {
+      if (char.inventory.length >= char.inventorySlots && !recipe.resultItem.stackable) {
           addNotification("Нет места для нового предмета!");
           return;
       }
 
+      // Consume Materials logic hardened
       const newInv = [...char.inventory];
       for (const mat of recipe.materials) {
-          for (let i = 0; i < mat.count; i++) {
-              const idx = newInv.findIndex(item => item.name === mat.name);
-              if (idx !== -1) newInv.splice(idx, 1);
+          let needed = mat.count;
+          // Iterate backwards to safely remove or reduce items
+          for (let i = newInv.length - 1; i >= 0; i--) {
+              if (needed <= 0) break;
+              
+              if (newInv[i].name === mat.name) {
+                  const itemAmt = newInv[i].amount || 1;
+                  if (itemAmt > needed) {
+                      // Partial consumption
+                      newInv[i] = { ...newInv[i], amount: itemAmt - needed };
+                      needed = 0;
+                  } else {
+                      // Full consumption of stack
+                      needed -= itemAmt;
+                      newInv.splice(i, 1);
+                  }
+              }
           }
       }
 
-      const newItem = { ...recipe.resultItem, id: Math.random().toString() };
-      newInv.push(newItem);
+      char.gold -= recipe.goldCost;
+      char.inventory = newInv;
 
-      updateState({
-          character: {
-              ...char,
-              gold: char.gold - recipe.goldCost,
-              inventory: newInv
-          }
-      });
+      // Add Result
+      const newItem = { ...recipe.resultItem, id: generateUUID() };
+      const updatedChar = addItemToInventory(char, newItem);
+
+      updateState({ character: updatedChar });
       addNotification(`Создано: ${newItem.name}`);
   };
 
@@ -78,8 +100,20 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
         <div className="flex-1 overflow-y-auto p-4">
             {tab === 'RECIPES' && (
                 <div className="grid gap-4">
-                    {RECIPES.map(recipe => (
-                        <div key={recipe.id} className="bg-[#3a3442] p-4 border border-gray-600 relative shadow-md">
+                    {RECIPES.map(recipe => {
+                        const isLocked = gameState.character!.level < recipe.resultItem.levelReq;
+                        const canAfford = gameState.character!.gold >= recipe.goldCost;
+                        
+                        return (
+                        <div key={recipe.id} className={`bg-[#3a3442] p-4 border border-gray-600 relative shadow-md transition-all ${isLocked ? 'opacity-50 grayscale' : ''}`}>
+                            {isLocked && (
+                                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20">
+                                    <div className="bg-black/80 px-3 py-1 text-red-400 text-xs font-bold border border-red-500">
+                                        🔒 УРОВЕНЬ {recipe.resultItem.levelReq}
+                                    </div>
+                                </div>
+                            )}
+                            
                             <div className="flex justify-between items-start mb-3">
                                 <div className="font-bold text-xs flex items-center gap-2" style={{ color: RARITY_COLORS[recipe.resultItem.rarity] }}>
                                     <span className="text-xl">{recipe.resultItem.icon}</span> 
@@ -87,7 +121,8 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
                                 </div>
                                 <button 
                                     onClick={() => craftItem(recipe)}
-                                    className="pixel-btn py-1 px-3 text-[10px] border-orange-500 text-orange-400 hover:bg-orange-900/40"
+                                    disabled={isLocked}
+                                    className={`pixel-btn py-1 px-3 text-[10px] ${canAfford ? 'border-orange-500 text-orange-400 hover:bg-orange-900/40' : 'border-gray-500 text-gray-500 cursor-not-allowed'}`}
                                 >
                                     СОЗДАТЬ ({recipe.goldCost}з)
                                 </button>
@@ -107,7 +142,7 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
                                 })}
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </div>
             )}
 
@@ -115,9 +150,10 @@ const Crafting: React.FC<Props> = ({ gameState, updateState, addNotification }) 
                 <div className="grid grid-cols-3 gap-3">
                     {userMaterials.length === 0 && <div className="col-span-3 text-center text-gray-500 text-xs mt-10">Рюкзак для материалов пуст.</div>}
                     {userMaterials.map((mat, i) => (
-                        <div key={i} className="bg-[#1a181e] p-3 border border-gray-700 text-center hover:border-gray-500 transition-colors">
+                        <div key={i} className="bg-[#1a181e] p-3 border border-gray-700 text-center hover:border-gray-500 transition-colors relative">
                             <div className="text-2xl mb-2">{mat.icon}</div>
                             <div className="text-[10px] truncate font-bold mb-1" style={{color: RARITY_COLORS[mat.rarity]}}>{mat.name}</div>
+                            {mat.amount && mat.amount > 1 && <div className="absolute top-1 right-1 bg-black/80 px-1 text-[9px] border border-gray-600 rounded">x{mat.amount}</div>}
                             <div className="text-[8px] text-gray-600 uppercase tracking-wider">{mat.materialType}</div>
                         </div>
                     ))}

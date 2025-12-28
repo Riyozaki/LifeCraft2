@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { GameState, Quest, ItemRarity, JournalEntry, QuestCategory, ReputationType } from '../types';
+import React, { useState } from 'react';
+import { GameState, Quest, ItemRarity, JournalEntry, QuestCategory, ReputationType, Buff } from '../types';
 import { 
-    DAILY_QUEST_POOL, WEEKLY_QUEST_POOL, ONETIME_QUEST_POOL, EVENT_DEFINITIONS, 
-    RARITY_COLORS, generateRandomItem, XP_TO_LEVEL, STAT_POINTS_PER_LEVEL
+    ONETIME_QUEST_POOL, 
+    RARITY_COLORS, generateRandomItem, XP_TO_LEVEL, GAME_BALANCE
 } from '../constants';
+import { addItemToInventory } from '../services/game';
 
 interface Props {
   gameState: GameState;
@@ -15,102 +16,14 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
   const [activeTab, setActiveTab] = useState<QuestCategory>(QuestCategory.DAILY);
   const [reflectionQuestId, setReflectionQuestId] = useState<string | null>(null);
 
-  useEffect(() => {
-    refreshQuestsIfNeeded();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const refreshQuestsIfNeeded = () => {
-    const now = new Date();
-    const lastDaily = new Date(gameState.lastDailyReset);
-    const lastWeekly = new Date(gameState.lastWeeklyReset || 0);
-
-    const isNewDay = now.getDate() !== lastDaily.getDate() || now.getMonth() !== lastDaily.getMonth();
-    const daysSinceWeekly = (now.getTime() - lastWeekly.getTime()) / (1000 * 60 * 60 * 24);
-    const isNewWeek = (now.getDay() === 1 && daysSinceWeekly > 1) || daysSinceWeekly > 7;
-
-    const isForceInit = gameState.activeQuests.length === 0;
-
-    let newActiveQuests = [...gameState.activeQuests];
-    let dailyResetTime = gameState.lastDailyReset;
-    let weeklyResetTime = gameState.lastWeeklyReset || 0;
-    let charUpdates: any = {};
-
-    if (isNewDay || isForceInit) {
-        if (!isForceInit) {
-            const uncompletedDailies = newActiveQuests.filter(q => q.category === QuestCategory.DAILY && !q.completed).length;
-            if (uncompletedDailies >= 3) { 
-                 addNotification("Пропущены задания! Штраф честности.");
-                 charUpdates.dailyStreak = 0;
-                 charUpdates.honesty = Math.max(0, (gameState.character?.honesty || 100) - 15);
-            }
-        }
-
-        newActiveQuests = newActiveQuests.filter(q => q.category !== QuestCategory.DAILY);
-        
-        for (let i = 0; i < 3; i++) {
-            const template = DAILY_QUEST_POOL[Math.floor(Math.random() * DAILY_QUEST_POOL.length)];
-            newActiveQuests.push({
-                ...template,
-                id: `d_${Date.now()}_${i}`,
-                category: QuestCategory.DAILY,
-                rewardGold: 50, 
-                rewardExp: 20,
-                completed: false
-            });
-        }
-        dailyResetTime = Date.now();
-    }
-
-    if (isNewWeek || isForceInit) {
-         newActiveQuests = newActiveQuests.filter(q => q.category !== QuestCategory.WEEKLY);
-
-         for (let i = 0; i < 2; i++) {
-            const template = WEEKLY_QUEST_POOL[Math.floor(Math.random() * WEEKLY_QUEST_POOL.length)];
-            newActiveQuests.push({
-                ...template,
-                id: `w_${Date.now()}_${i}`,
-                category: QuestCategory.WEEKLY,
-                rewardGold: 200,
-                rewardExp: 100,
-                rewardItem: generateRandomItem(gameState.character!.level, ItemRarity.UNCOMMON),
-                completed: false
-            });
-        }
-        weeklyResetTime = Date.now();
-    }
-
-    newActiveQuests = newActiveQuests.filter(q => q.category !== QuestCategory.EVENT);
-
-    EVENT_DEFINITIONS.forEach((evt, i) => {
-        if (evt.dateMatch(now)) {
-            const exists = newActiveQuests.find(q => q.title === evt.quest.title) || gameState.completedQuestIds.includes(`evt_${i}`);
-            if (!exists) {
-                newActiveQuests.push({
-                    ...evt.quest,
-                    id: `evt_${i}`,
-                    category: QuestCategory.EVENT,
-                    rewardGold: 1000,
-                    rewardExp: 500,
-                    rewardItem: evt.rewardItem,
-                    completed: false
-                });
-            }
-        }
-    });
-
-    if (isNewDay || isNewWeek || isForceInit) {
-        updateState({
-            activeQuests: newActiveQuests,
-            lastDailyReset: dailyResetTime,
-            lastWeeklyReset: weeklyResetTime,
-            character: { ...gameState.character!, ...charUpdates }
-        });
-    }
-  };
-
   const addOneTimeQuest = () => {
-      // Check for cooldown (2 hours)
+      // LIMIT: Max 5 active OneTime quests
+      const currentOneTimeCount = gameState.activeQuests.filter(q => q.category === QuestCategory.ONETIME).length;
+      if (currentOneTimeCount >= 5) {
+          addNotification("Слишком много активных задач (макс. 5)!");
+          return;
+      }
+
       const lastOneTime = gameState.activeQuests
         .filter(q => q.category === QuestCategory.ONETIME)
         .sort((a,b) => (b.lastCompletedAt || 0) - (a.lastCompletedAt || 0))[0];
@@ -120,24 +33,28 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
           return;
       }
 
-      const template = ONETIME_QUEST_POOL[Math.floor(Math.random() * ONETIME_QUEST_POOL.length)];
-      const diff = template.difficulty;
-      let item = null;
-      if (diff >= 3) item = generateRandomItem(gameState.character!.level, template.rarity);
+      const newQuests: Quest[] = [];
 
-      const newQuest: Quest = {
-          ...template,
-          id: `ot_${Date.now()}`,
-          category: QuestCategory.ONETIME,
-          rewardGold: 100 * diff,
-          rewardExp: 50 * diff,
-          rewardItem: item || undefined,
-          completed: false,
-          cooldownMs: 7200000 // 2 hours
-      };
+      for(let i=0; i<3; i++) {
+        const template = ONETIME_QUEST_POOL[Math.floor(Math.random() * ONETIME_QUEST_POOL.length)];
+        const diff = template.difficulty || 1;
+        let item = null;
+        if (diff >= 3) item = generateRandomItem(gameState.character!.level, template.rarity);
 
-      updateState({ activeQuests: [...gameState.activeQuests, newQuest] });
-      addNotification("Новое разовое задание!");
+        newQuests.push({
+            ...template,
+            id: `ot_${Date.now()}_${i}`,
+            category: QuestCategory.ONETIME,
+            rewardGold: 100 * diff,
+            rewardExp: 50 * diff,
+            rewardItem: item || undefined,
+            completed: false,
+            cooldownMs: 7200000 // 2 hours
+        } as Quest);
+      }
+
+      updateState({ activeQuests: [...gameState.activeQuests, ...newQuests] });
+      addNotification("Добавлено 3 новых задачи!");
   };
 
   const initCompletion = (questId: string) => {
@@ -152,30 +69,37 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
     const quest = gameState.activeQuests[questIndex];
     if (quest.completed) return;
 
-    const char = { ...gameState.character! };
+    let char = { ...gameState.character! };
     
-    // Formula: HonestyMultiplier = 0.8 + Honesty / 500
+    // Check Inventory Space for reward
+    if (quest.rewardItem) {
+        // Safe check for inventory limit
+        if (char.inventory.length >= char.inventorySlots && !quest.rewardItem.stackable) {
+             addNotification("Инвентарь полон! Освободите место.");
+             return;
+        }
+    }
+
     const honestyMult = 0.8 + (char.honesty / 500);
 
-    // Formula: QuestRarity Values: Daily=0, Weekly=1, OneTime=2, Event=3
     let rarityVal = 0;
     if (quest.category === QuestCategory.WEEKLY) rarityVal = 1;
     if (quest.category === QuestCategory.ONETIME) rarityVal = 2;
     if (quest.category === QuestCategory.EVENT) rarityVal = 3;
 
-    // Formula: RewardXP = Base * (1 + Rarity/10) * (1 + Level/50)
-    const baseExp = quest.rewardExp;
-    const finalExp = Math.floor(baseExp * (1 + rarityVal/10) * (1 + char.level/50));
+    // LEVEL SCALING: Exponential
+    const levelMult = Math.pow(GAME_BALANCE.SCALING.QUEST_GOLD_SCALING, char.level);
 
-    // Formula: RewardGold = Base * (1 + Rarity/5) * HonestyMultiplier
+    const baseExp = quest.rewardExp;
+    const finalExp = Math.floor(baseExp * (1 + rarityVal/10) * levelMult);
+
     const baseGold = quest.rewardGold;
-    const finalGold = Math.floor(baseGold * (1 + rarityVal/5) * honestyMult);
+    const finalGold = Math.floor(baseGold * (1 + rarityVal/5) * honestyMult * levelMult);
 
     char.gold += finalGold;
     char.currentExp += finalExp;
 
-    // Reputation Formula: Value * (1 + Honesty/100) * MoodMult
-    let questRepValue = 5; // Default Heroism
+    let questRepValue = 5; 
     if (quest.reputationType === ReputationType.DISCIPLINE) questRepValue = 3;
     
     let moodMult = 1.0;
@@ -185,12 +109,24 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
     const repChange = Math.floor(questRepValue * (1 + char.honesty/100) * moodMult);
     char.reputation[quest.reputationType] += repChange;
 
-    if (quest.rewardItem) {
-        if (char.inventory.length < char.inventorySlots) {
-            char.inventory.push({ ...quest.rewardItem, id: Math.random().toString() });
-        } else {
-            addNotification("Инвентарь полон! Награда потеряна.");
+    // APPLY MOOD BUFF
+    const newBuffs = [...gameState.dungeonState.activeBuffs];
+    let buffMsg = "";
+    
+    const addBuffUnique = (name: string, desc: string) => {
+        if (!newBuffs.some(b => b.name === name)) {
+            newBuffs.push({ id: `buff_${Date.now()}`, name, duration: 1, description: desc });
+            buffMsg = `Получен эффект: ${name}!`;
         }
+    }
+
+    if (mood === 'Inspired') addBuffUnique('Вдохновение', '+10% Урона на 1 бой');
+    else if (mood === 'Neutral') addBuffUnique('Спокойствие', '+10% Защиты на 1 бой');
+    
+    const newDungeonState = { ...gameState.dungeonState, activeBuffs: newBuffs };
+
+    if (quest.rewardItem) {
+        char = addItemToInventory(char, quest.rewardItem);
     }
 
     if (quest.category === QuestCategory.DAILY) {
@@ -201,7 +137,6 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
         }
     }
     
-    // Journal bonus to honesty
     char.honesty = Math.min(100, char.honesty + 1);
 
     const newEntry: JournalEntry = {
@@ -218,32 +153,26 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
         char.currentExp -= xpNeeded;
         char.maxHp += 10;
         char.hp = char.maxHp;
-        // Basic stats bump, Points are logic for UI usually, but we assume allocation happens later or auto-distribute?
-        // For simplicity, auto-distribute 1 point to VIT to ensure survivability
         char.stats.vit += 1; 
         addNotification(`Уровень повышен! Теперь ${char.level}`);
     }
 
     let updatedQuests = [...gameState.activeQuests];
-    // Update quest status
     updatedQuests[questIndex].completed = true;
     updatedQuests[questIndex].completedToday = true;
     updatedQuests[questIndex].lastCompletedAt = Date.now();
 
-    if (quest.category === QuestCategory.ONETIME) {
-        // We keep it in list to show it's done or remove? Spec says "Cooldown 2 hours".
-        // If we remove it, we lose the 'lastCompletedAt' tracking. 
-        // Better to keep completed onetimes in a separate list or just mark completed.
-        // For this impl, we keep it but disable completion.
-    }
-
     updateState({
         character: char,
         activeQuests: updatedQuests,
-        completedQuestIds: [...gameState.completedQuestIds, reflectionQuestId]
+        completedQuestIds: [...gameState.completedQuestIds, reflectionQuestId],
+        dungeonState: newDungeonState
     });
 
-    addNotification(`Выполнено! +${finalGold}з +${finalExp}xp`);
+    const honestyPercent = Math.floor((honestyMult - 1) * 100);
+    const bonusText = honestyPercent !== 0 ? `(Честность ${honestyPercent > 0 ? '+' : ''}${honestyPercent}%)` : '';
+
+    addNotification(`+${finalGold}з ${bonusText}, +${finalExp}xp. ${buffMsg}`);
     setReflectionQuestId(null);
   };
 
@@ -270,7 +199,7 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
                 onClick={addOneTimeQuest}
                 className="pixel-btn"
             >
-                + Задание
+                + Задания (3)
             </button>
         )}
       </div>
@@ -322,8 +251,9 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
             
             <div className="flex justify-between items-center border-t border-gray-600 pt-3">
                 <div className="text-xs flex gap-3 text-[#e6c35c]">
-                    <span>💰 {quest.rewardGold}</span>
-                    <span>✨ {quest.rewardExp} XP</span>
+                    {/* Show base reward, notification shows actual calculation */}
+                    <span>💰 {quest.rewardGold}++</span>
+                    <span>✨ {quest.rewardExp}++</span>
                     {quest.rewardItem && <span className="text-[#bd93f9]">🎁 {quest.rewardItem.name}</span>}
                 </div>
                 
@@ -361,13 +291,14 @@ const QuestBoard: React.FC<Props> = ({ gameState, updateState, addNotification }
           <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
               <div className="retro-container p-6 w-full max-w-sm text-center">
                   <h3 className="text-[#e6c35c] mb-4 text-sm uppercase">Рефлексия</h3>
-                  <p className="text-xs mb-6 text-gray-300">Что ты чувствуешь после выполнения?</p>
+                  <p className="text-xs mb-2 text-gray-300">Что ты чувствуешь после выполнения?</p>
+                  <p className="text-[10px] text-gray-500 mb-6 italic">Настроение дает временный эффект в подземелье.</p>
                   
                   <div className="grid grid-cols-2 gap-3 mb-6">
-                      <button onClick={() => completeQuest('Inspired')} className="pixel-btn hover:bg-yellow-900">🤩 Вдохновение</button>
-                      <button onClick={() => completeQuest('Tired')} className="pixel-btn hover:bg-blue-900">😴 Усталость</button>
-                      <button onClick={() => completeQuest('Neutral')} className="pixel-btn hover:bg-gray-700">😐 Спокойствие</button>
-                      <button onClick={() => completeQuest('Regret')} className="pixel-btn hover:bg-red-900">😞 Сожаление</button>
+                      <button onClick={() => completeQuest('Inspired')} className="pixel-btn hover:bg-yellow-900 border-yellow-700">🤩 Вдохновение <br/><span className='text-[8px]'>(Урон)</span></button>
+                      <button onClick={() => completeQuest('Neutral')} className="pixel-btn hover:bg-gray-700 border-gray-500">😐 Спокойствие <br/><span className='text-[8px]'>(Защита)</span></button>
+                      <button onClick={() => completeQuest('Tired')} className="pixel-btn hover:bg-blue-900 border-blue-800">😴 Усталость</button>
+                      <button onClick={() => completeQuest('Regret')} className="pixel-btn hover:bg-red-900 border-red-800">😞 Сожаление</button>
                   </div>
                   <button onClick={() => setReflectionQuestId(null)} className="text-[10px] text-gray-500 hover:text-white underline">Отмена</button>
               </div>

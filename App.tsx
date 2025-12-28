@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import CharacterCreation from './components/CharacterCreation';
 import QuestBoard from './components/QuestBoard';
 import Dungeon from './components/Dungeon';
@@ -6,42 +6,78 @@ import Shop from './components/Shop';
 import Crafting from './components/Crafting';
 import { GameState, ReputationType } from './types';
 import { loadGame, saveGame } from './services/storage';
-import { MOOD_EMOJIS } from './constants';
+import { processGameTick } from './services/game';
+import { MOOD_EMOJIS, XP_TO_LEVEL } from './constants';
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [activeView, setActiveView] = useState<'HUB' | 'DUNGEON' | 'SHOP' | 'QUESTS' | 'CRAFT'>('HUB');
   const [notification, setNotification] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  
+  // Ref for debouncing save
+  const saveTimeoutRef = useRef<number | null>(null);
 
+  // --- INITIALIZATION ---
   useEffect(() => {
-    const loaded = loadGame();
-    if (loaded) {
-      setGameState(loaded);
-      applyInflationTax(loaded);
-    }
+    const init = async () => {
+        try {
+            setIsLoading(true);
+            // Simulate async load for future-proofing (e.g. IndexedDB)
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            const loaded = loadGame();
+            if (loaded && loaded.character) {
+                // Process tick immediately upon load (offline progress, resets)
+                const processed = processGameTick(loaded);
+                setGameState(processed);
+            } else {
+                setGameState(null); // Trigger Char Creation
+            }
+        } catch (e) {
+            console.error("Failed to load game", e);
+            setLoadError("Ошибка загрузки сохранения. Попробуйте обновить страницу.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    init();
   }, []);
 
-  const applyInflationTax = (state: GameState) => {
-      const char = state.character;
-      if (!char || char.level < 20) return;
+  // --- DEBOUNCED AUTO-SAVE ---
+  useEffect(() => {
+    if (!gameState) return;
 
-      const threshold = 2000 * char.level;
-      if (char.gold > threshold) {
-          const tax = Math.floor((char.gold - threshold) / 100);
-          if (tax > 0) {
-              const newChar = { ...char, gold: char.gold - tax };
-              updateState({ character: newChar });
-              setTimeout(() => showNotification(`Налог на роскошь: -${tax} золота`), 1000);
+    if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = window.setTimeout(() => {
+        saveGame(gameState);
+    }, 1000); // Save 1 second after last state change
+
+    return () => {
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [gameState]);
+
+  // --- SAFETY: PREVENT ACCIDENTAL CLOSE ---
+  useEffect(() => {
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+          if (activeView === 'DUNGEON') {
+              e.preventDefault();
+              e.returnValue = ''; // Legacy support
           }
-      }
-  };
+      };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [activeView]);
 
   const updateState = (updates: Partial<GameState>) => {
     setGameState(prev => {
         if (!prev) return null;
-        const newState = { ...prev, ...updates };
-        saveGame(newState);
-        return newState;
+        return { ...prev, ...updates };
     });
   };
 
@@ -50,13 +86,35 @@ const App: React.FC = () => {
       setTimeout(() => setNotification(null), 3000);
   };
 
-  if (!gameState) {
-    return <CharacterCreation onComplete={setGameState} />;
+  // --- RENDER LOADERS/ERRORS ---
+  if (isLoading) {
+      return <div className="h-screen bg-[#2a2630] flex items-center justify-center text-[#e6c35c] font-pixel">ЗАГРУЗКА МИРА...</div>;
   }
 
+  if (loadError) {
+      return <div className="h-screen bg-[#2a2630] flex items-center justify-center text-red-500 font-pixel">{loadError}</div>;
+  }
+
+  if (!gameState) {
+    return (
+        <CharacterCreation onComplete={(newState) => {
+            const processedState = processGameTick(newState);
+            setGameState(processedState);
+        }} />
+    );
+  }
+
+  // Safe character access
+  const char = gameState.character;
+  if (!char) return <div>Ошибка данных персонажа</div>;
+
   // Large Font Mode check
-  const isLargeFont = gameState.character?.settings?.fontSize === 'large';
+  const isLargeFont = char.settings?.fontSize === 'large';
   const baseFontSize = isLargeFont ? 'text-base' : 'text-xs';
+  
+  // XP Calculation
+  const nextLevelXp = XP_TO_LEVEL(char.level);
+  const xpPercent = Math.min(100, (char.currentExp / nextLevelXp) * 100);
 
   // Dungeon Mode is Full Screen overlay
   if (activeView === 'DUNGEON') {
@@ -86,42 +144,41 @@ const App: React.FC = () => {
         <div className="w-full md:w-1/3 bg-[#1a181e] p-5 flex flex-col border-r-4 border-[#e6c35c] overflow-y-auto">
             <div className="text-center mb-8">
                 <div className="w-24 h-24 mx-auto bg-[#2a2630] mb-3 border-4 border-[#e6c35c] flex items-center justify-center text-5xl shadow-lg">
-                    {gameState.character?.classType === 'Воин' && '⚔️'}
-                    {gameState.character?.classType === 'Маг' && '🔮'}
-                    {gameState.character?.classType === 'Разведчик' && '🗡️'}
-                    {gameState.character?.classType === 'Целитель' && '🌿'}
+                    {char.classType === 'Воин' && '⚔️'}
+                    {char.classType === 'Маг' && '🔮'}
+                    {char.classType === 'Разведчик' && '🗡️'}
+                    {char.classType === 'Целитель' && '🌿'}
                 </div>
-                <h2 className="text-[#e6c35c] text-xl font-bold mb-1 tracking-wide">{gameState.character?.name}</h2>
-                <div className={`text-gray-500 ${baseFontSize} uppercase tracking-wider`}>Ур.{gameState.character?.level} {gameState.character?.classType}</div>
+                <h2 className="text-[#e6c35c] text-xl font-bold mb-1 tracking-wide">{char.name}</h2>
+                <div className={`text-gray-500 ${baseFontSize} uppercase tracking-wider`}>Ур.{char.level} {char.classType}</div>
             </div>
 
             <div className={`space-y-4 mb-8 ${baseFontSize}`}>
                 <div>
                     <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                         <span>ЖИЗНЬ</span>
-                        <span className="text-[#50fa7b]">{gameState.character?.hp}/{gameState.character?.maxHp}</span>
+                        <span className="text-[#50fa7b]">{char.hp}/{char.maxHp}</span>
                     </div>
                     <div className="w-full bg-gray-800 h-3 border border-gray-600">
-                        <div className="bg-[#50fa7b] h-full transition-all duration-500" style={{width: `${(gameState.character!.hp / gameState.character!.maxHp)*100}%`}}></div>
+                        <div className="bg-[#50fa7b] h-full transition-all duration-500" style={{width: `${(char.hp / char.maxHp)*100}%`}}></div>
                     </div>
                 </div>
                 <div>
                     <div className="flex justify-between text-[10px] text-gray-400 mb-1">
                         <span>ОПЫТ</span>
-                        <span className="text-[#8be9fd]">{gameState.character?.currentExp}</span>
+                        <span className="text-[#8be9fd]">{char.currentExp} / {Math.floor(nextLevelXp)}</span>
                     </div>
                      <div className="w-full bg-gray-800 h-2 border border-gray-600">
-                         {/* Visual approximation for XP bar based on complex formula, simplifying visualization denom to next level approx */}
-                        <div className="bg-[#8be9fd] h-full" style={{width: `${(gameState.character!.currentExp / (100 * gameState.character!.level + 50 + 10 * Math.pow(gameState.character!.level, 2)))*100}%`}}></div>
+                        <div className="bg-[#8be9fd] h-full" style={{width: `${xpPercent}%`}}></div>
                     </div>
                 </div>
                  <div className="flex justify-between items-center bg-[#2a2630] p-2 border border-gray-700">
                     <span className="text-gray-400 text-[10px]">ЗОЛОТО</span>
-                    <span className="text-[#f1fa8c] font-bold">{gameState.character?.gold}</span>
+                    <span className="text-[#f1fa8c] font-bold">{char.gold}</span>
                 </div>
                  <div className="flex justify-between items-center bg-[#2a2630] p-2 border border-gray-700">
                     <span className="text-gray-400 text-[10px]">ЧЕСТНОСТЬ</span>
-                    <span className="text-[#bd93f9] font-bold">{gameState.character?.honesty}%</span>
+                    <span className="text-[#bd93f9] font-bold">{char.honesty}%</span>
                 </div>
             </div>
 
@@ -131,7 +188,7 @@ const App: React.FC = () => {
                 {Object.values(ReputationType).map(rep => (
                     <div key={rep} className="flex justify-between mb-2 text-[10px] text-gray-400">
                         <span>{rep}</span>
-                        <span className="text-white">{gameState.character?.reputation?.[rep] || 0}</span>
+                        <span className="text-white">{char.reputation?.[rep] || 0}</span>
                     </div>
                 ))}
             </div>
@@ -156,14 +213,12 @@ const App: React.FC = () => {
                     🛒 Лавка
                 </button>
                 
-                {gameState.character!.level >= 3 && (
-                     <button 
-                        onClick={() => setActiveView('CRAFT')}
-                        className={`pixel-btn w-full text-left ${activeView === 'CRAFT' ? 'bg-[#3a3442] border-[#e6c35c]' : 'border-gray-600 text-gray-400'}`}
-                    >
-                        ⚒️ Кузница
-                    </button>
-                )}
+                <button 
+                    onClick={() => setActiveView('CRAFT')}
+                    className={`pixel-btn w-full text-left ${activeView === 'CRAFT' ? 'bg-[#3a3442] border-[#e6c35c]' : 'border-gray-600 text-gray-400'}`}
+                >
+                    ⚒️ Кузница
+                </button>
 
                 <button 
                     onClick={() => setActiveView('DUNGEON')}
@@ -182,14 +237,14 @@ const App: React.FC = () => {
                 {activeView === 'HUB' && (
                     <div className="h-full flex flex-col p-8 overflow-y-auto">
                         <h2 className="text-[#e6c35c] text-xl mb-6 border-b-2 border-[#e6c35c] pb-3 uppercase tracking-widest text-shadow">Летопись Героя</h2>
-                        {gameState.character?.journal?.length === 0 ? (
+                        {char.journal?.length === 0 ? (
                             <div className="text-center mt-20 opacity-50">
                                 <p className="text-gray-500 mb-2">Страницы пусты...</p>
                                 <p className="text-xs text-gray-600">Выполни первое задание, чтобы начать историю.</p>
                             </div>
                         ) : (
                             <div className="space-y-6">
-                                {gameState.character?.journal?.map((entry) => (
+                                {char.journal?.map((entry) => (
                                     <div key={entry.id} className="bg-[#1a181e] p-5 border-l-4 border-[#e6c35c] shadow-md relative">
                                         <div className="flex justify-between text-gray-500 text-[10px] mb-2 font-mono">
                                             <span>{new Date(entry.date).toLocaleDateString()}</span>
